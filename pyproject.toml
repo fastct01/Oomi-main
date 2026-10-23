@@ -1,0 +1,35 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "oomi"
+version = "0.1.0"
+description = "A self-improving agent for macOS, built on Claude, whose team never fixes the same bug twice: proven fixes (antibodies) are shared through MongoDB Atlas."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+dependencies = [
+    "anthropic>=1.17,<2",
+    "pymongo>=4.10",
+    "rich>=13",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "mongomock>=4.3"]
+# The native window on macOS (`oomi gui`). Elsewhere, `oomi gui` opens in your browser.
+gui = ["pywebview>=6.2; sys_platform == 'darwin'"]
+# Syncing your account profile to MongoDB Atlas (Settings, Account).
+cloud = ["pymongo>=4.6"]
+
+[project.scripts]
+oomi = "oomi.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["oomi*"]
+
+[tool.setuptools.package-data]
+oomi = ["assets/*", "gui/static/*", "certified_skills/*/SKILL.md"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

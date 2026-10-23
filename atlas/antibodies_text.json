@@ -1,0 +1,25 @@
+{
+  "mappings": {
+    "dynamic": false,
+    "fields": {
+      "error_text": {
+        "type": "string",
+        "analyzer": "lucene.standard"
+      },
+      "fix": {
+        "type": "string",
+        "analyzer": "lucene.standard"
+      },
+      "command": {
+        "type": "string",
+        "analyzer": "lucene.standard"
+      },
+      "team": {
+        "type": "token"
+      },
+      "status": {
+        "type": "token"
+      }
+    }
+  }
+}

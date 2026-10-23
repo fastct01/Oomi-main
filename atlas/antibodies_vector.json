@@ -1,0 +1,18 @@
+{
+  "fields": [
+    {
+      "type": "autoEmbed",
+      "modality": "text",
+      "path": "error_text",
+      "model": "voyage-4"
+    },
+    {
+      "type": "filter",
+      "path": "team"
+    },
+    {
+      "type": "filter",
+      "path": "status"
+    }
+  ]
+}

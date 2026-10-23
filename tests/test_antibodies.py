@@ -1,0 +1,192 @@
+"""Antibodies in the app's agent: a fixed error becomes a candidate with proof, an approved one cures a teammate's
+error, and nothing leaks across teams or into the database that shouldn't."""
+
+import json
+from pathlib import Path
+
+from conftest import FakeLLM, ScriptedUI, resp, text, tool
+from oomi.agent import Agent
+from oomi.antibodies import RETIRE_AFTER_MISSES, Store, Watcher
+from oomi.config import Config
+
+CHECK = """
+import pathlib, sys
+cfg = pathlib.Path("config.txt").read_text() if pathlib.Path("config.txt").exists() else ""
+if "enabled=true" not in cfg:
+    raise ValueError("feature flag 'enabled' is off in config.txt")
+print("ok")
+"""
+ERROR = "ValueError: feature flag 'enabled' is off in config.txt"
+
+
+def fix_script():
+    return [resp(tool("run_shell", {"command": "python3 check.py"})),
+            resp(tool("write_file", {"path": "config.txt", "content": "enabled=true\n"})),
+            resp(tool("run_shell", {"command": "python3 check.py"})),
+            resp(text("Fixed."))]
+
+
+def project(tmp_path: Path, name: str, check: str = CHECK) -> Path:
+    root = tmp_path / name
+    root.mkdir()
+    (root / "check.py").write_text(check)
+    return root
+
+
+def run(env, store: Store, root: Path, script):
+    cfg = Config()
+    cfg.sandbox, cfg.trust, cfg.memory_learn = False, "full", False
+    llm, ui, notes = FakeLLM(script), ScriptedUI(), []
+    agent = Agent(cfg, llm, ui, root, env.memory, env.skills)
+    agent.watcher = Watcher(store, root, describe=lambda s, p: "Turn on the feature flag: set enabled=true in config.txt.",
+                            notify=notes.append)
+    agent.run("make check.py pass")
+    return agent.watcher, llm, notes
+
+
+def tool_results(llm) -> list:
+    out = []
+    for call in llm.calls:
+        last = call["messages"][-1]
+        if last["role"] == "user" and isinstance(last["content"], list):
+            out += [b["content"] for b in last["content"] if b.get("type") == "tool_result"]
+    return out
+
+
+def test_fixing_an_error_makes_a_candidate_with_proof(env, team_store, tmp_path):
+    watcher, llm, notes = run(env, team_store, project(tmp_path, "shop"), fix_script())
+    assert len(watcher.candidates) == 1
+    c = watcher.candidates[0]
+    assert c["error_text"] == ERROR and c["proven_by"] == {"command": "python3 check.py", "exit_code": 0}
+    assert c["fix"].startswith("Turn on the feature flag") and any("edited config.txt" in s for s in c["steps"])
+    assert c["tokens_to_fix"] > 0 and c["project"] == "shop"
+    assert team_store.list() == [] and any("ready for your review" in n for n in notes)  # nothing shared yet
+
+
+def test_an_approved_antibody_cures_a_teammate(env, team_store, db, tmp_path):
+    watcher, _, _ = run(env, team_store, project(tmp_path, "shop"), fix_script())
+    team_store.save(watcher.candidates[0], approved=True)
+
+    olga = Store(db, team="encode-london", user="Olga", device="olga-mac", use_atlas_search=False)
+    _, llm, notes = run(env, olga, project(tmp_path, "api"), fix_script())
+    first = tool_results(llm)[0]
+    assert "[antibody]" in first and "set enabled=true in config.txt" in first
+    assert any("cured" in n for n in notes)
+    doc = team_store.list()[0]
+    assert doc["uses"] == 1 and doc["cures"] == 1
+    kinds = [e["kind"] for e in db.events.find().sort("ts", 1)]
+    assert kinds.count("error") == 2 and "antibody_offered" in kinds and "antibody_cured" in kinds
+
+
+def test_other_teams_never_see_it(env, team_store, db, tmp_path):
+    watcher, _, _ = run(env, team_store, project(tmp_path, "shop"), fix_script())
+    team_store.save(watcher.candidates[0], approved=True)
+    rival = Store(db, team="other-team", user="Max", device="x", use_atlas_search=False)
+    _, llm, _ = run(env, rival, project(tmp_path, "rival"), fix_script())
+    assert "[antibody]" not in tool_results(llm)[0]
+
+
+def test_pending_antibodies_are_not_matched_until_approved(env, team_store, tmp_path):
+    watcher, _, _ = run(env, team_store, project(tmp_path, "shop"), fix_script())
+    _id = team_store.save(watcher.candidates[0], approved=False)
+    assert team_store.match(ERROR) is None
+    assert team_store.review(_id, approve=True) and team_store.match(ERROR) is not None
+
+
+def test_saving_the_same_fix_twice_confirms_it(env, team_store, tmp_path):
+    watcher, _, _ = run(env, team_store, project(tmp_path, "shop"), fix_script())
+    cand = watcher.candidates[0]
+    a = team_store.save(cand, approved=True)
+    b = team_store.save(dict(cand), approved=True)
+    assert a == b and team_store.list()[0]["confirmations"] == 2
+
+
+def test_similar_but_not_identical_errors_still_match(env, team_store, tmp_path):
+    watcher, _, _ = run(env, team_store, project(tmp_path, "shop"), fix_script())
+    team_store.save(watcher.candidates[0], approved=True)
+    m = team_store.match("ValueError: feature flag 'enabled' is off in settings config.txt")
+    assert m is not None and m.how == "local"
+    assert team_store.match("PermissionError: cannot write to /var/log") is None
+
+
+def test_an_antibody_that_keeps_failing_is_retired(env, team_store, tmp_path):
+    watcher, _, _ = run(env, team_store, project(tmp_path, "shop"), fix_script())
+    _id = team_store.save(watcher.candidates[0], approved=True)
+    for _ in range(RETIRE_AFTER_MISSES):
+        team_store.record_miss(_id)
+    assert team_store.list() == [] and team_store.list(status="retired")[0]["_id"] == _id
+
+
+def test_secrets_in_errors_never_reach_the_database(env, team_store, tmp_path):
+    root = project(tmp_path, "leaky", 'import pathlib\n'
+                   'if not pathlib.Path("ok").exists():\n'
+                   '    raise RuntimeError("auth failed for token=sk-ant-REALSECRET1234567890 at /Users/ivan/keys")\n')
+    script = [resp(tool("run_shell", {"command": "python3 check.py"})),
+              resp(tool("write_file", {"path": "ok", "content": "1"})),
+              resp(tool("run_shell", {"command": "python3 check.py"})), resp(text("Done."))]
+    watcher, _, _ = run(env, team_store, root, script)
+    team_store.save(watcher.candidates[0], approved=True)
+    blob = str(list(team_store.db.antibodies.find())) + str(list(team_store.db.events.find()))
+    assert "REALSECRET" not in blob and "/Users/ivan" not in blob
+
+
+def test_a_database_hiccup_never_breaks_the_task(env, team_store, tmp_path):
+    class Broken(Watcher):
+        def observe(self, *a, **k):
+            raise ConnectionError("Atlas went away")
+
+    cfg = Config()
+    cfg.sandbox, cfg.trust, cfg.memory_learn = False, "full", False
+    root = project(tmp_path, "shop")
+    ui = ScriptedUI()
+    agent = Agent(cfg, FakeLLM(fix_script()), ui, root, env.memory, env.skills)
+    agent.watcher = Broken(team_store, root)
+    assert agent.run("make it pass") == "Fixed."
+    assert any("Antibodies unavailable" in m for _, m in ui.notices)
+
+
+def test_keys_in_the_oomi_home_env_work_in_any_project(tmp_path, monkeypatch):
+    import os
+
+    from oomi.antibodies import TeamSettings
+
+    home, project = tmp_path / "home", tmp_path / "project"
+    home.mkdir(), project.mkdir()
+    (home / ".env").write_text("MONGODB_URI=mongodb+srv://u:p@c.example.net\nOOMI_TEAM=from-home\n")
+    (project / ".env").write_text("OOMI_TEAM=from-project\n")
+    for k in ("MONGODB_URI", "OOMI_TEAM"):
+        monkeypatch.delenv(k, raising=False)
+    try:
+        s = TeamSettings.load(home, project)
+    finally:
+        for k in ("MONGODB_URI", "OOMI_TEAM"):
+            os.environ.pop(k, None)  # .env files set real environment variables
+    assert s.mongodb_uri.startswith("mongodb+srv://") and s.team == "from-project"  # the project's own wins
+
+
+# ------------------------------------------------------------------------------------------------ the app
+def test_the_app_saves_fixes_for_review_and_shares_them(server, db, tmp_path):
+    server.app.connect_team(db=db)
+    code, st = server.call("GET", "antibodies")
+    assert code == 200 and st["connected"] and st["mode"] in ("hybrid+rerank", "hybrid", "vector", "text", "local")
+    server.app.team.use_atlas_search = False  # mongomock has no Atlas Search
+    _, bot = server.call("POST", "bots", {"name": "Shop", "trust": "full"})
+    (Path(bot["folder"]) / "check.py").write_text(CHECK)
+    server.llm.script += fix_script()
+    server.call("POST", f"bots/{bot['id']}/send", {"text": "make check.py pass"})
+    server.wait_idle(bot["id"])
+    _, st = server.call("GET", "antibodies")
+    assert len(st["pending"]) == 1 and st["pending"][0]["error_text"] == ERROR and st["approved"] == []
+    pid = st["pending"][0]["id"]
+    code, st = server.call("POST", f"antibodies/{pid}/review", {"approve": True})
+    assert code == 200 and st["pending"] == [] and st["approved"][0]["id"] == pid
+    assert server.call("POST", f"antibodies/{pid}/review", {"approve": True})[0] == 400
+    code, m = server.call("POST", "antibodies/match", {"error": ERROR})
+    assert code == 200 and m["match"]["how"] == "exact"
+    assert server.call("POST", "antibodies/match", {"error": ""})[0] == 400
+
+
+def test_the_app_without_atlas_says_how_to_connect(server):
+    code, st = server.call("GET", "antibodies")
+    assert code == 200 and st["connected"] is False
+    assert server.call("POST", "antibodies/setup", {})[0] == 400
