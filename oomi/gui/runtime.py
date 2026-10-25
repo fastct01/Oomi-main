@@ -425,10 +425,11 @@ class BotRuntime:
     def _attach_watcher(self, agent: Agent) -> None:
         """Give the agent the team's antibodies once Atlas is reachable: proven fixes for errors it hits, and
         candidates from errors it fixes."""
-        if agent.watcher is not None or self.antibodies is None:
+        if self.antibodies is None:
             return
         store = self.antibodies()
-        if store is None:
+        # Keep the watcher on the team's current connection: after a reconnect, fixes must go where Share looks
+        if store is None or (agent.watcher is not None and agent.watcher.store is store):
             return
         from ..antibodies import Watcher
         from ..llm import text_of
@@ -438,25 +439,36 @@ class BotRuntime:
             return text_of(r).strip() if r else ""
 
         agent.watcher = Watcher(store, Path(self.record.folder), describe=describe,
-                                notify=lambda msg: self.ui.notice(msg, "info"))
+                                notify=self._watcher_notice)
+
+    def _watcher_notice(self, msg: str) -> None:
+        # The app posts its own "ready to share" line with a Share button at the end of the turn
+        if "ready for your review" not in msg:
+            self.ui.notice(msg, "info")
 
     def _save_antibody_candidates(self, agent: Agent) -> None:
-        """Fixes found this turn wait for you; nothing is shared before you click Share on the notice in the chat."""
+        """Fixes found this turn wait for you to click Share on the notice in the chat, unless Settings, Antibodies
+        says to share them automatically."""
         w = agent.watcher
         if w is None or not w.candidates:
             return
+        auto = Config.load().antibody_auto_share
         saved = []
         while w.candidates:
             cand = w.candidates.pop(0)
             try:
-                saved.append(str(w.store.save(cand, approved=False)))
+                saved.append(str(w.store.save(cand, approved=auto)))
             except Exception as e:  # noqa: BLE001
                 self.ui.notice(f"Couldn't save the antibody: {e}", "warn")
         if saved:
-            self.emit("antibodies", pending=len(saved))
-            self.put({"id": new_id("n-"), "type": "notice", "level": "info", "ts": time.time(), "action": "antibody",
-                      "antibodies": saved, "text": f"{'A fix is' if len(saved) == 1 else f'{len(saved)} fixes are'} "
-                      "ready to share with your team."})
+            self.emit("antibodies", pending=0 if auto else len(saved))
+            many = f"{len(saved)} fixes" if len(saved) > 1 else "a fix"
+            item = {"id": new_id("n-"), "type": "notice", "level": "info", "ts": time.time(), "action": "antibody",
+                    "antibodies": saved, "text": f"{'A fix is' if len(saved) == 1 else f'{len(saved)} fixes are'} "
+                    "ready to share with your team."}
+            if auto:  # already shared: no button
+                item.update(closed=True, shared=len(saved), auto=True, text=f"Shared {many} with your team automatically.")
+            self.put(item)
 
     def _turn(self, fn) -> None:
         """Run one request (and any messages sent while it worked) with the window kept up to date."""

@@ -109,6 +109,8 @@ class Store:
             existing = self.antibodies.find_one_and_update(
                 {"team": self.team, "signature": doc["signature"], "status": "approved"},
                 {"$inc": {"confirmations": 1}})
+            if existing is None:  # it was deleted in between: this one takes its place
+                existing = {"_id": self.antibodies.insert_one(doc).inserted_id}
             _id = existing["_id"]
         self.log("antibody_created" if approved else "antibody_pending", antibody_id=_id,
                  error_text=doc["error_text"], signature=doc["signature"])
@@ -121,8 +123,16 @@ class Store:
                 {"_id": ObjectId(str(antibody_id)), "team": self.team, "status": "pending"},
                 {"$set": {"status": status, "approved_at": now() if approve else None}})
         except DuplicateKeyError:
-            self.antibodies.update_one({"_id": ObjectId(str(antibody_id))}, {"$set": {"status": "rejected"}})
-            return False
+            # The team already has an approved fix for this exact error: sharing this one confirms that fix
+            # (the same as saving it approved), and this copy goes away rather than piling up as rejected.
+            dup = self.antibodies.find_one({"_id": ObjectId(str(antibody_id)), "team": self.team})
+            if dup is None:
+                return False
+            self.antibodies.update_one({"team": self.team, "signature": dup.get("signature"), "status": "approved"},
+                                       {"$inc": {"confirmations": 1}})
+            self.antibodies.delete_one({"_id": dup["_id"]})
+            self.log("antibody_confirmed", antibody_id=dup["_id"])
+            return True
         if res.modified_count:
             self.log(f"antibody_{status}", antibody_id=ObjectId(str(antibody_id)))
         return bool(res.modified_count)

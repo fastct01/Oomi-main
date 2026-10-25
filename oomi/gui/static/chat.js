@@ -503,23 +503,24 @@
         settings: ["Open settings", () => O.openSettings("providers")],
       };
       // older notices say "…ready to share with your team: review in Settings, Antibodies." and get the button too
-      if (it.action === "antibody" || /ready to share with your team/.test(it.text || "")) {
-        it = { ...it, text: it.text.replace(/:\s*review in Settings, Antibodies\.?$/, ".") };
+      if (it.action === "antibody" || (!it.action && /ready to share with your team: review in Settings, Antibodies\.$/.test(it.text || ""))) {
+        it = { ...it, text: (it.text || "").replace(/:\s*review in Settings, Antibodies\.?$/, ".") };
         // a fix this bot proved: Share sends it to the team (deleting it is in Settings, Antibodies)
         const share = async (btn) => {
           btn.disabled = true;
           try {
             const r = await POST(`bots/${this.bot}/share`, { item: it.id });
+            if (r.item) this.upsertItem(r.item); // don't wait for the live update to redraw the line
             O.toast(r.shared ? "Shared with your team" : "Already shared or deleted in Settings, Antibodies", 2200);
           } catch (e) { O.fail(e); btn.disabled = false; }
         };
         return h("div", { class: "row notice info", dataset: { id: it.id } },
-          h("div", { class: "row-line" }, icon("antibody", 14), h("span", {}, it.closed ? (it.shared ? "Shared with your team." : "This fix was already shared or deleted.") : it.text),
+          h("div", { class: "row-line" }, icon("antibody", 14), h("span", {}, it.auto ? it.text : it.closed ? (it.shared ? "Shared with your team." : "This fix was already shared or deleted.") : it.text),
             it.closed ? null : h("button", { type: "button", class: "act-btn", onclick: (e) => share(e.currentTarget) }, "Share")));
       }
       const a = ACT[it.action];
       return h("div", { class: `row notice ${it.level || "info"}`, dataset: { id: it.id } },
-        h("div", { class: "row-line" }, icon(it.level === "error" || it.level === "warn" ? "alert" : it.text.startsWith("Memory:") ? "memory" : "info", 14),
+        h("div", { class: "row-line" }, icon(it.level === "error" || it.level === "warn" ? "alert" : (it.text || "").startsWith("Memory:") ? "memory" : "info", 14),
           h("span", {}, it.text), a ? h("button", { type: "button", class: "act-btn", onclick: a[1] }, a[0]) : null));
     }
 

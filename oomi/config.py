@@ -120,6 +120,7 @@ class Config:
     memory_full_inject_chars: int = 6000  # below this, every memory is shown once per session
     memory_query_expansion: bool = True  # above it, a cheap Haiku call adds synonyms to the search
     memory_learn: bool = True  # learn facts automatically from what you say
+    antibody_auto_share: bool = False  # share a fix a bot proved straight away, without a Share button (Settings, Antibodies)
     learn_every_turns: int = 6
     skills_index_limit: int = 10  # skills listed in the prompt; the rest are found by search
     voyage_model: str = "voyage-4-lite"

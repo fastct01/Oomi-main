@@ -403,6 +403,7 @@
     ["providers", "awake", "Keep the Mac awake", "sleep caffeinate power"], ["providers", "color", "oomi's color", "ghost dock icon theme blue pink purple green peach"],
     ["antibodies", "", "Antibodies", "team fixes errors mongodb atlas shared proven cures vector search rerank"],
     ["antibodies", "test", "Test antibodies, step by step", "try check prompt broken demo share how"],
+    ["antibodies", "autoshare", "Share fixes automatically", "antibodies approve auto share without asking"],
     ["apps", "", "Connected apps", "connectors mcp notion github linear jira sentry vercel supabase stripe integrations"], ["providers", "file", "Export, import or reset settings", "backup restore defaults file"],
     ["display", "mode", "Simple or Advanced", "panes split layout tabs windows workspace"], ["display", "steps", "Tool steps", "activity commands detailed hidden"],
     ["display", "thinking", "Show what it's thinking", "reasoning typing"], ["display", "text", "Text size", "font bigger smaller zoom"],
@@ -778,7 +779,9 @@
       h("div", { class: "grow" }, "Loading antibodies…", h("div", { class: "small" }, "Asking MongoDB Atlas for your team's fixes.")), h("span", { class: "spin" })));
     body.append(loading);
     let a;
-    try { a = await GET("antibodies"); } finally { loading.remove(); }
+    let s;
+    try { [a, s] = await Promise.all([GET("antibodies"), GET("settings")]); } finally { loading.remove(); }
+    S.settings = s;
     if (!body.isConnected) return;
     const again = () => O.refreshSettings("antibodies");
     const mins = (s) => (s >= 3600 ? `${(s / 3600).toFixed(1)} h` : s >= 60 ? `${Math.round(s / 60)} min` : `${Math.round(s)} s`);
@@ -809,7 +812,11 @@
     body.append(h("div", { class: "list" }, h("div", { class: "li" }, appLogo(ATLAS, "sm"),
       h("div", { class: "grow" }, `MongoDB Atlas · team ${a.team}`, h("div", { class: "small" }, `Sharing as ${a.user}`),
         h("div", { class: "small", style: a.search_error ? "color:var(--fg)" : "", title: "Hybrid search ($rankFusion of vector and text), reranked by Voyage inside Atlas, when the cluster supports it." }, searchLine)),
-      h("div", { class: "mini" }, setup), h("span", { class: "mark-txt" }, a.search_error ? "!" : "✓"))));
+      h("div", { class: "mini" }, setup), h("span", { class: "mark-txt" }, a.search_error ? "!" : "✓"))),
+      O.toggleRow("Share fixes automatically", s.antibody_auto_share
+        ? "When a bot proves a fix, it's shared with your team straight away. There's no Share button in the chat."
+        : "Off: when a bot proves a fix, the chat shows a Share button and nothing is shared until you click it.",
+      s.antibody_auto_share, (v) => save({ antibody_auto_share: v }).then(() => { O.toast(v ? "Fixes are shared automatically" : "Fixes wait for Share in the chat", 2000); again(); }), "autoshare"));
 
     const empty = !a.approved.length && !a.pending.length;
     if (empty) body.append(howItWorks());
@@ -836,7 +843,7 @@
         d.proven_by && d.proven_by.command ? `proved by \`${d.proven_by.command}\`` : "",
         d.uses ? `cured ${d.cures || 0} of ${d.uses}` : "", d.seconds_to_fix ? `took ${mins(d.seconds_to_fix)}` : ""].filter(Boolean).join(" · "))), actions); };
     const remove = (d) => O.confirmBox("Delete this fix?", "It's removed from MongoDB Atlas, so nobody's bots are offered it any more. This can't be undone.", "Delete",
-      () => O.api("DELETE", `antibodies/${d.id}`).then(() => { O.toast("Fix deleted", 1500); again(); }), true);
+      () => O.api("DELETE", `antibodies/${d.id}`).then(() => { O.toast("Fix deleted", 1500); again(); }, (e) => { again(); throw e; }), true);
     if (a.pending.length) {
       body.append(h("div", { class: "section" }, `Waiting for you (${a.pending.length})`),
         h("p", { class: "small-note" }, "Fixes your bots proved that aren't shared yet. To share one, click Share on its line in that bot's chat. Your team only gets the ones you share."),
@@ -893,7 +900,9 @@
         ["Copy the test prompt", h("div", {}, h("pre", { class: "prompt-box", style: "margin-top:6px" }, prompt),
           h("button", { type: "button", class: "btn", style: "margin-top:8px", onclick: () => O.copyText(prompt, "Prompt copied") }, icon("copy", 15), "Copy prompt"))],
         ["Send it to any bot", "Paste it into a bot's message box and press Enter. If it asks to run python3 broken.py, click Allow."],
-        ["Click Share in the chat", "When it's done, the chat says “A fix is ready to share with your team.” Click Share next to it."],
+        ["Click Share in the chat", s.antibody_auto_share
+          ? "Share fixes automatically is on, so there's no button: when it's done, the chat says “Shared a fix with your team automatically.”"
+          : "When it's done, the chat says “A fix is ready to share with your team.” Click Share next to it."],
         ["Check it here", "Come back to this page. The fix is listed under Your team's fixes."],
         ["Check your team gets it", "Send the same prompt to a different bot. The chat says the error matches a fix proven by you, and the bot tries your fix first. On this page, the fix then shows “cured 1 of 1”."],
         ["Clean up", "Click Delete on the fix if you don't want to keep it."],

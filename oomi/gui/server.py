@@ -703,7 +703,8 @@ class App:
             "key_from_env": bool(os.environ.get("ANTHROPIC_API_KEY")),
             "model": cfg.model, "fallback_models": cfg.fallback_models, "effort": cfg.effort,
             "max_session_cost_usd": cfg.max_session_cost_usd, "web_search": cfg.web_search, "notify": cfg.notify,
-            "memory_learn": cfg.memory_learn, "models": list(MODELS), "efforts": list(EFFORTS),
+            "memory_learn": cfg.memory_learn, "antibody_auto_share": cfg.antibody_auto_share,
+            "models": list(MODELS), "efforts": list(EFFORTS),
             "providers": [{"id": p["id"], "name": p["name"], "base_url": p["base_url"], "has_key": bool(get_secret(f"provider:{p['id']}"))}
                           for p in cfg.providers],
             "small_model": cfg.small_model, "show_thinking": cfg.show_thinking,
@@ -742,7 +743,7 @@ class App:
                 raise ApiError(400, "Pick a budget between $0 and $1,000.")
             updates["max_session_cost_usd"] = v
         for flag in ("web_search", "notify", "memory_learn", "show_thinking", "redact_secrets", "read_project_files",
-                     "notify_approval", "notify_done", "notify_failed", "keep_awake"):
+                     "notify_approval", "notify_done", "notify_failed", "keep_awake", "antibody_auto_share"):
             if flag in body:
                 updates[flag] = bool(body[flag])
         if "small_model" in body:
@@ -791,7 +792,8 @@ class App:
     MANAGED = ("model", "fallback_models", "effort", "max_session_cost_usd", "web_search", "notify",
                "memory_learn", "show_thinking", "redact_secrets", "read_project_files", "notify_approval", "notify_done",
                "notify_failed", "keep_awake", "small_model", "notify_sound", "approval_timeout_minutes",
-               "max_task_minutes", "max_steps_per_turn", "compact_at_tokens", "deny_commands", "protected_write_names")
+               "max_task_minutes", "max_steps_per_turn", "compact_at_tokens", "deny_commands", "protected_write_names",
+               "antibody_auto_share")
 
     def export_settings(self) -> dict:
         cur = self.settings()
@@ -1769,17 +1771,29 @@ class Handler(BaseHTTPRequestHandler):
         elif key == ("POST", "share"):
             # The Share button on a chat notice: the fixes that turn proved go to the team
             item = rt.timeline.get(str(self._body().get("item") or ""))
-            # Notices written before the button existed don't name their fixes: they share this bot's waiting ones
-            legacy = item is not None and item.get("type") == "notice" and "ready to share with your team" in str(item.get("text"))
+            # Notices written before the button existed don't name their fixes: they share the waiting ones this Mac
+            # saved for this bot's project just before the notice (not a teammate's, not later ones)
+            legacy = (item is not None and item.get("type") == "notice" and not item.get("action")
+                      and str(item.get("text") or "").endswith("ready to share with your team: review in Settings, Antibodies."))
             if item is None or (item.get("action") != "antibody" and not legacy):
                 raise ApiError(404, "No such fix.")
             if app.team is None:
                 raise ApiError(400, "Connect MongoDB Atlas first (Settings, Account).")
-            ids = item.get("antibodies") or [str(d["_id"]) for d in app.team.list("pending", 50)
-                                             if d.get("project") == Path(rt.record.folder).name]
+            if item.get("closed"):  # clicked again (another window, a double click): it's done, change nothing
+                return self._json({"item": item, "shared": 0})
+            def announced(d) -> bool:
+                made = d.get("created_at")
+                when = made.timestamp() if hasattr(made, "timestamp") else 0
+                return (d.get("project") == Path(rt.record.folder).name and d.get("author") == app.team.user
+                        and d.get("device") == app.team.device and item.get("ts", 0) - 600 <= when <= item.get("ts", 0) + 60)
+            ids = item.get("antibodies") or [str(d["_id"]) for d in app.team.list("pending", 50) if announced(d)]
             shared = sum(1 for i in ids if app.team.review(i, approve=True))
-            item = dict(item, closed=True, shared=shared)
+            item = dict(item, closed=True, shared=shared, antibodies=ids)
             rt.put(item)
+            if shared and "ready to share with your team" in rt.record.preview:
+                rt.record.preview = "Shared with your team."  # the sidebar line said it was waiting
+                app.registry.save()
+                app.bus.emit({"type": "bot", "bot": bot_id, "bot_state": rt.state()})
             app.bus.emit({"type": "antibodies"})
             self._json({"item": item, "shared": shared})
         elif key == ("POST", "react"):

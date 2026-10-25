@@ -2,6 +2,7 @@
 error, and nothing leaks across teams or into the database that shouldn't."""
 
 import json
+import time
 from pathlib import Path
 
 from conftest import FakeLLM, ScriptedUI, resp, text, tool
@@ -215,12 +216,62 @@ def test_an_older_chat_notice_shares_that_bots_waiting_fix(server, db):
     project = Path(bot["folder"]).name
     mine = server.app.team.save({"error_text": ERROR, "signature": "s1", "fix": "f", "project": project}, approved=False)
     other = server.app.team.save({"error_text": "ValueError: x", "signature": "s2", "fix": "g", "project": "elsewhere"}, approved=False)
-    note = rt.put({"id": "n-old", "type": "notice", "level": "info", "ts": 0,
+    store = server.app.team  # a teammate's unshared fix in a folder with the same name: not ours to share
+    teammate = store.antibodies.insert_one({"error_text": "KeyError: k", "signature": "s3", "fix": "h", "project": project,
+                                            "team": store.team, "author": "someone-else", "device": "their-mac",
+                                            "status": "pending", "created_at": store.antibodies.find_one({"_id": mine})["created_at"]}).inserted_id
+    note = rt.put({"id": "n-old", "type": "notice", "level": "info", "ts": time.time(),
                    "text": "A fix is ready to share with your team: review in Settings, Antibodies."})
     code, r = server.call("POST", f"bots/{bot['id']}/share", {"item": note["id"]})
     assert code == 200 and r["shared"] == 1 and r["item"]["closed"]
     _, st = server.call("GET", "antibodies")
-    assert [d["id"] for d in st["approved"]] == [str(mine)] and [d["id"] for d in st["pending"]] == [str(other)]
+    assert [d["id"] for d in st["approved"]] == [str(mine)]
+    assert sorted(d["id"] for d in st["pending"]) == sorted([str(other), str(teammate)])
+
+
+def test_sharing_a_fix_the_team_already_has_counts_as_a_confirmation(server, db):
+    server.app.connect_team(db=db)
+    store = server.app.team
+    first = store.save({"error_text": ERROR, "signature": "same", "fix": "f", "project": "a"}, approved=False)
+    again = store.save({"error_text": ERROR, "signature": "same", "fix": "f2", "project": "b"}, approved=False)
+    assert store.review(first, approve=True) and store.review(again, approve=True)  # the second used to come back rejected
+    docs = list(store.antibodies.find({"team": store.team, "signature": "same"}))
+    assert len(docs) == 1 and docs[0]["_id"] == first and docs[0]["status"] == "approved" and docs[0]["confirmations"] == 2
+
+
+def test_fixes_are_shared_automatically_when_that_setting_is_on(server, db):
+    server.app.connect_team(db=db)
+    server.app.team.use_atlas_search = False
+    code, s = server.call("POST", "settings", {"antibody_auto_share": True})
+    assert code == 200 and s["antibody_auto_share"] is True
+    _, bot = server.call("POST", "bots", {"name": "Shop", "trust": "full"})
+    (Path(bot["folder"]) / "check.py").write_text(CHECK)
+    server.llm.script += fix_script()
+    server.call("POST", f"bots/{bot['id']}/send", {"text": "make check.py pass"})
+    server.wait_idle(bot["id"])
+    _, tl = server.call("GET", f"bots/{bot['id']}/timeline")
+    note = next(i for i in tl["items"] if i.get("action") == "antibody")
+    assert note["closed"] and note["auto"] and note["shared"] == 1 and "automatically" in note["text"]
+    assert not any("ready for your review" in (i.get("text") or "") for i in tl["items"])  # one line, not two
+    _, st = server.call("GET", "antibodies")
+    assert st["pending"] == [] and [d["id"] for d in st["approved"]] == note["antibodies"]
+    assert server.call("POST", f"bots/{bot['id']}/share", {"item": note["id"]})[1]["shared"] == 0
+
+
+def test_share_on_a_closed_notice_changes_nothing(server, db):
+    server.app.connect_team(db=db)
+    _, bot = server.call("POST", "bots", {"name": "Invoices", "trust": "project"})
+    rt = server.app.runtimes[bot["id"]]
+    project = Path(bot["folder"]).name
+    first = server.app.team.save({"error_text": ERROR, "signature": "s1", "fix": "f", "project": project}, approved=False)
+    note = rt.put({"id": "n-old", "type": "notice", "level": "info", "ts": time.time(),
+                   "text": "A fix is ready to share with your team: review in Settings, Antibodies."})
+    assert server.call("POST", f"bots/{bot['id']}/share", {"item": note["id"]})[1]["shared"] == 1
+    later = server.app.team.save({"error_text": "ValueError: x", "signature": "s2", "fix": "g", "project": project}, approved=False)
+    _, r = server.call("POST", f"bots/{bot['id']}/share", {"item": note["id"]})  # clicked again later
+    assert r["shared"] == 0 and r["item"]["shared"] == 1 and r["item"]["antibodies"] == [str(first)]
+    _, st = server.call("GET", "antibodies")
+    assert [d["id"] for d in st["pending"]] == [str(later)]  # a fix it never announced stays waiting
 
 
 def test_a_fix_added_by_hand_is_shared_matched_and_can_be_deleted(server, db):
