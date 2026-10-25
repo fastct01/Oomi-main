@@ -402,6 +402,7 @@
     ["providers", "web", "Web search", "internet browse fetch"], ["providers", "learn", "Learn about me", "memory facts preferences"],
     ["providers", "awake", "Keep the Mac awake", "sleep caffeinate power"], ["providers", "color", "oomi's color", "ghost dock icon theme blue pink purple green peach"],
     ["antibodies", "", "Antibodies", "team fixes errors mongodb atlas shared proven cures vector search rerank"],
+    ["antibodies", "test", "Test antibodies, step by step", "try check prompt broken demo share how"],
     ["apps", "", "Connected apps", "connectors mcp notion github linear jira sentry vercel supabase stripe integrations"], ["providers", "file", "Export, import or reset settings", "backup restore defaults file"],
     ["display", "mode", "Simple or Advanced", "panes split layout tabs windows workspace"], ["display", "steps", "Tool steps", "activity commands detailed hidden"],
     ["display", "thinking", "Show what it's thinking", "reasoning typing"], ["display", "text", "Text size", "font bigger smaller zoom"],
@@ -795,7 +796,7 @@
           a.error ? h("details", { class: "err-details" }, h("summary", {}, "Details"), h("pre", {}, a.error)) : null),
         h("span", { class: "mark-txt" }, a.error ? "!" : "·"))),
         h("div", { class: "row-inline", style: "margin-top:10px" }, h("button", { type: "button", class: "btn primary", onclick: () => O.openSettings("account", "sync") }, "Connect in Account"), retry),
-        howItWorks());
+        howItWorks(), testGuide(false));
       return;
     }
     const setup = h("button", { type: "button", onclick: async () => {
@@ -834,16 +835,13 @@
       h("div", { class: "rs dim" }, [d.author ? `by ${d.author}` : "", d.project ? `in ${d.project}` : "",
         d.proven_by && d.proven_by.command ? `proved by \`${d.proven_by.command}\`` : "",
         d.uses ? `cured ${d.cures || 0} of ${d.uses}` : "", d.seconds_to_fix ? `took ${mins(d.seconds_to_fix)}` : ""].filter(Boolean).join(" · "))), actions); };
-    const review = (id, approve) => POST(`antibodies/${id}/review`, { approve }).then(() => { O.toast(approve ? "Shared with your team" : "Discarded", 1500); again(); }).catch(O.fail);
     const remove = (d) => O.confirmBox("Delete this fix?", "It's removed from MongoDB Atlas, so nobody's bots are offered it any more. This can't be undone.", "Delete",
       () => O.api("DELETE", `antibodies/${d.id}`).then(() => { O.toast("Fix deleted", 1500); again(); }), true);
     if (a.pending.length) {
       body.append(h("div", { class: "section" }, `Waiting for you (${a.pending.length})`),
-        h("p", { class: "small-note" }, "Fixes your bots proved. Your team only gets the ones you share."),
+        h("p", { class: "small-note" }, "Fixes your bots proved that aren't shared yet. To share one, click Share on its line in that bot's chat. Your team only gets the ones you share."),
         h("div", { class: "routines" }, a.pending.map((d) =>
-          doc(d, h("div", { class: "row-inline", style: "flex:none" },
-            h("button", { type: "button", class: "btn quiet", onclick: () => review(d.id, false) }, "Discard"),
-            h("button", { type: "button", class: "btn primary", onclick: () => review(d.id, true) }, "Share"))))));
+          doc(d, h("button", { type: "button", class: "btn quiet", style: "flex:none", onclick: () => remove(d) }, "Delete")))));
     }
     if (!empty) {
       const list = h("div", { class: "routines" });
@@ -851,7 +849,7 @@
         const w = q.trim().toLowerCase();
         const items = a.approved.filter((d) => !w || `${d.error_text} ${d.fix} ${d.author} ${d.project}`.toLowerCase().includes(w));
         list.replaceChildren(...(items.length ? items.map((d) => doc(d, h("button", { type: "button", class: "btn quiet", style: "flex:none", onclick: () => remove(d) }, "Delete")))
-          : [h("p", { class: "empty-note" }, a.approved.length ? "No fix matches that." : "None shared yet. Share the ones waiting above.")]));
+          : [h("p", { class: "empty-note" }, a.approved.length ? "No fix matches that." : "None shared yet. Click Share on a fix's line in the bot's chat.")]));
       };
       paint();
       body.append(h("div", { class: "section" }, `Your team's fixes (${a.approved.length})`), ...[a.approved.length > 5
@@ -882,37 +880,36 @@
         O.field("Fix", fFix, "What change made the error go away, in a sentence or two."),
         h("div", { class: "row-inline" }, h("div", { class: "grow" }, O.field("Command that proves it", fCmd, "Optional. It passes once the fix is in.")),
           h("div", { class: "grow" }, O.field("Project", fProj, "Optional."))),
-        addErr, h("div", { class: "row-inline", style: "justify-content:flex-end" }, addBtn)));
+        addErr, h("div", { class: "row-inline", style: "justify-content:flex-end" }, addBtn)),
+      testGuide(true));
 
-    // what would a bot be offered for this error?
-    const err = h("textarea", { class: "instr", rows: "3", placeholder: "Paste an error, like: AttributeError: module 'collections' has no attribute 'Mapping'" });
-    const out = h("div");
-    const test = h("button", { type: "button", class: "btn", onclick: async () => {
-      test.disabled = true; test.textContent = "Searching…";
-      try {
-        const r = await POST("antibodies/match", { error: err.value });
-        out.replaceChildren(h("div", { class: "list", style: "margin-top:8px" }, r.match
-          ? h("div", { class: "li" }, h("span", { class: "mark-txt" }, "✓"), h("div", { class: "grow" }, r.match.fix, h("div", { class: "small" }, `${r.match.how}, score ${r.match.score} · by ${r.match.author}`)))
-          : h("div", { class: "li" }, h("span", { class: "mark-txt" }, "·"), h("div", { class: "grow" }, "Nothing sure enough to offer", h("div", { class: "small" }, `${r.how} search found ${r.candidates.length} candidates`)))));
-      } catch (e) { O.fail(e); }
-      test.disabled = false; test.textContent = "Find a match";
-    } }, "Find a match");
-    err.style.width = "100%";
-    body.append(h("div", { class: "section" }, "Try a match"), h("p", { class: "small-note" }, "What a bot would be offered if it hit this error."),
-      err, h("div", { class: "row-inline", style: "margin-top:8px;justify-content:flex-end" }, test), out);
-
+    function step(n, t, d) {
+      return h("div", { class: "li" }, h("span", { class: "n-badge" }, String(n)), h("div", { class: "grow" }, t, d ? h("div", { class: "small" }, d) : null));
+    }
+    // Always at the end of the page: a known error a bot can break and fix on purpose, to check the whole loop.
+    function testGuide(connected) {
+      const prompt = "Create broken.py containing these two lines:\nimport collections\nprint(collections.Mapping)\nRun `python3 broken.py` and show me the error. Fix broken.py, then run exactly `python3 broken.py` again to prove it passes. Finally, delete broken.py.";
+      const steps = [
+        ["Copy the test prompt", h("div", {}, h("pre", { class: "prompt-box", style: "margin-top:6px" }, prompt),
+          h("button", { type: "button", class: "btn", style: "margin-top:8px", onclick: () => O.copyText(prompt, "Prompt copied") }, icon("copy", 15), "Copy prompt"))],
+        ["Send it to any bot", "Paste it into a bot's message box and press Enter. If it asks to run python3 broken.py, click Allow."],
+        ["Click Share in the chat", "When it's done, the chat says “A fix is ready to share with your team.” Click Share next to it."],
+        ["Check it here", "Come back to this page. The fix is listed under Your team's fixes."],
+        ["Check your team gets it", "Send the same prompt to a different bot. The chat says the error matches a fix proven by you, and the bot tries your fix first. On this page, the fix then shows “cured 1 of 1”."],
+        ["Clean up", "Click Delete on the fix if you don't want to keep it."],
+      ];
+      if (!connected) steps.unshift(["Connect MongoDB Atlas", "Click Connect in Account above. The test needs a connection to save and share the fix."]);
+      return h("div", { dataset: { key: "test" } }, h("div", { class: "section" }, "Test it, step by step"),
+        h("p", { class: "small-note" }, "Have a bot break something on purpose and fix it, to check that fixes are saved, shared and reused."),
+        h("div", { class: "list" }, steps.map(([t, d], i) => step(i + 1, t, d))),
+        h("p", { class: "small-note", style: "margin-top:8px" }, "No Share button after step 3? Check the top of this page says MongoDB Atlas is connected, and that the bot ran exactly python3 broken.py both times. Piping it through tail or head hides the failure. If your team already has this fix, there's nothing new to share: the bot uses the fix straight away, as in step 5. Delete it first to test from the start."));
+    }
     function howItWorks() {
-      const prompt = "Create broken.py containing these two lines:\nimport collections\nprint(collections.Mapping)\nRun `python3 broken.py`, fix broken.py, then run `python3 broken.py` again to prove it passes.";
-      const step = (n, t, d) => h("div", { class: "li" }, h("span", { class: "n-badge" }, String(n)), h("div", { class: "grow" }, t, h("div", { class: "small" }, d)));
       return h("div", {}, h("div", { class: "section" }, "How it works"),
         h("div", { class: "list" },
           step(1, "A bot fixes an error", "A command fails, the bot changes something, and the same command then passes."),
           step(2, "You share the fix", "It waits here until you click Share. Then it's stored in your team's shared brain on MongoDB Atlas, the one place every teammate's oomi learns from."),
-          step(3, "Your team gets it first", "Any teammate's bot that hits a matching error, even worded differently, finds your fix in the shared brain and tries it first.")),
-        h("div", { class: "section" }, "Make your first one",
-          h("button", { type: "button", class: "btn quiet", style: "height:26px", onclick: () => O.copyText(prompt, "Prompt copied") }, icon("copy", 14), "Copy")),
-        h("p", { class: "small-note" }, "Send this to any bot. When it's done, the fix shows up here under Waiting for you."),
-        h("pre", { class: "prompt-box" }, prompt));
+          step(3, "Your team gets it first", "Any teammate's bot that hits a matching error, even worded differently, finds your fix in the shared brain and tries it first.")));
     }
   }
 
