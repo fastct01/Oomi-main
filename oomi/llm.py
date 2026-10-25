@@ -59,10 +59,13 @@ def _transport_errors() -> tuple:
 
 
 class LLM:
-    def __init__(self, api_key: str, max_retries: int = 4, http_client=None):
+    def __init__(self, api_key: str, max_retries: int = 4, http_client=None, base_url: Optional[str] = None):
+        """base_url: another provider that speaks the Messages API (a gateway or proxy); None is Anthropic."""
         import anthropic
 
         kwargs = {"http_client": http_client} if http_client is not None else {}
+        if base_url:
+            kwargs["base_url"] = base_url
         self.client = anthropic.Anthropic(api_key=api_key, max_retries=max_retries, **kwargs)
         self._current = None
 

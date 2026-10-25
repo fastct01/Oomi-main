@@ -57,6 +57,8 @@
     info: '<circle cx="12" cy="12" r="9"/><path d="M12 11v5.5M12 7.5h.01"/>',
     undo: '<path d="M9 14 4 9l5-5"/><path d="M4 9h11a5 5 0 0 1 0 10h-3"/>',
     shield: '<path d="M12 3.5 5 6v5.5c0 4.4 3 8 7 9 4-1 7-4.6 7-9V6Z"/>',
+    antibody: '<path d="M12 3.5 5 6v5.5c0 4.4 3 8 7 9 4-1 7-4.6 7-9V6Z"/><path d="M12 16.5v-4M12 12.5 9 9.5M12 12.5l3-3"/>',
+    plug: '<path d="M9 3.5v4M15 3.5v4"/><path d="M6.5 7.5h11v3a5.5 5.5 0 0 1-11 0Z"/><path d="M12 16v4.5"/>',
     changes: '<path d="M14 3.5H7a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8.5Z"/><path d="M14 3.5v5h5M12 11v5M9.5 13.5h5"/>',
     plan: '<path d="M9 6h11M9 12h11M9 18h11"/><path d="M4 6h.01M4 12h.01M4 18h.01" stroke-width="2.6"/>',
     memory: '<path d="M12 3.5a5.5 5.5 0 0 0-3.2 10V16h6.4v-2.5A5.5 5.5 0 0 0 12 3.5Z"/><path d="M9.5 19h5M10.5 21.5h3"/>',
@@ -253,6 +255,8 @@
     drag: null, // what's being dragged: {bot, from}
   };
   O.bot = (id) => O.S.bots.find((b) => b.id === id);
+  // Bots can share a name and a color; the start of the id tells them apart
+  O.shortId = (id) => "#" + String(id || "").replace(/^b/, "").slice(0, 6);
   O.isBusy = (b) => !!b && b.status !== "idle";
 
   // ---------------------------------------------------------------------------------------------- API
@@ -480,7 +484,7 @@
       if (e.node) { m.append(e.node); continue; }
       if (e.head) { m.append(h("div", { class: "menu-head" }, e.head)); continue; }
       m.append(h("button", {
-        type: "button", role: "menuitem", class: e.on ? "on" : "", disabled: !!e.disabled,
+        type: "button", role: "menuitem", class: [e.on ? "on" : "", e.delete ? "delete" : ""].join(" ").trim(), disabled: !!e.disabled,
         onclick: (ev) => { ev.stopPropagation(); O.closeMenu(); e.run(); },
       }, e.icon ? O.icon(e.icon, 16) : h("span", { class: "ic-gap" }), h("span", { class: "grow" }, e.label, e.desc ? h("span", { class: "d" }, e.desc) : null),
       e.keys ? h("kbd", {}, O.keys(e.keys)) : null));
@@ -516,6 +520,7 @@
     if (f) setTimeout(() => f.focus(), 30);
     return box;
   };
+  // danger: true for a careful OK button, "delete" for a red one (deleting a bot)
   O.confirmBox = function confirmBox(title, text, okLabel, onOk, danger = false) {
     O.modal((box, close) => {
       const ok = h("button", { class: "btn primary", type: "button", onclick: async () => {
@@ -524,7 +529,7 @@
       } }, okLabel);
       box.append(h("h3", {}, title), h("p", { class: "lead" }, text),
         h("div", { class: "foot" }, h("button", { class: "btn quiet", type: "button", onclick: close }, "Cancel"), ok));
-      if (danger) ok.classList.add("danger");
+      if (danger) ok.classList.add(danger === "delete" ? "delete" : "danger");
     });
   };
   O.promptBox = function promptBox(title, lead, value, okLabel, onOk, opts = {}) {

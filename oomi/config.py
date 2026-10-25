@@ -72,6 +72,9 @@ class Config:
     effort: str = "medium"  # low | medium | high | xhigh | max
     max_tokens: int = 16000
     show_thinking: bool = True
+    # Other providers that speak the Messages API, as {"id", "name", "base_url"}; each key is the secret provider:<id>.
+    # Anthropic itself is always there and isn't listed.
+    providers: list = field(default_factory=list)
 
     # Safety
     trust: str = "project"  # read-only | project | full

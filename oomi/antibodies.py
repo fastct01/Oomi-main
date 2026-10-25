@@ -127,6 +127,17 @@ class Store:
             self.log(f"antibody_{status}", antibody_id=ObjectId(str(antibody_id)))
         return bool(res.modified_count)
 
+    def delete(self, antibody_id) -> bool:
+        """Remove one of the team's antibodies for good (bots stop being offered it)."""
+        try:
+            oid = ObjectId(str(antibody_id))
+        except Exception:  # noqa: BLE001 - not an id
+            return False
+        res = self.antibodies.delete_one({"_id": oid, "team": self.team})
+        if res.deleted_count:
+            self.log("antibody_deleted", antibody_id=oid)
+        return bool(res.deleted_count)
+
     def list(self, status: Optional[str] = "approved", limit: int = 50) -> list:
         q = {"team": self.team}
         if status:

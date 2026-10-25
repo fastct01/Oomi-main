@@ -263,6 +263,35 @@ def test_settings_keep_hand_added_config(server):
     assert server.call("POST", "key", {"key": "not a key"})[0] == 400
 
 
+def test_other_providers_and_which_bot_uses_which(server, monkeypatch):
+    import oomi.keychain
+
+    monkeypatch.setattr(oomi.keychain, "_is_mac", lambda: False)  # secrets go to the test home, not the Keychain
+    assert server.call("POST", "providers", {"name": "Gateway", "base_url": "http://example.com", "key": "k1"})[0] == 400
+    assert server.call("POST", "providers", {"name": "Gateway", "base_url": "https://gw.example.com", "key": ""})[0] == 400
+    code, s = server.call("POST", "providers", {"name": "Gateway", "base_url": "https://gw.example.com/v1/", "key": "gw-key-1"})
+    assert code == 200 and [(p["name"], p["base_url"], p["has_key"]) for p in s["providers"]] == [("Gateway", "https://gw.example.com", True)]
+    assert "gw-key-1" not in json.dumps(s) and "gw-key-1" not in (server.home / "config.json").read_text()
+    assert server.call("POST", "providers", {"name": "gateway", "base_url": "http://localhost:4000", "key": "k"})[0] == 400  # same name
+    pid = s["providers"][0]["id"]
+
+    _, bot = server.call("POST", "bots", {"name": "Routed", "trust": "project"})
+    assert bot["provider"] == ""
+    assert server.call("PATCH", f"bots/{bot['id']}", {"provider": "p000000000000"})[0] == 400
+    code, bot = server.call("PATCH", f"bots/{bot['id']}", {"provider": pid})
+    assert code == 200 and bot["provider"] == pid
+    rt = server.app.runtimes[bot["id"]]
+    keys = []
+    rt.llm_factory = lambda k: keys.append(k) or server.llm
+    rt._llm()
+    assert keys == ["gw-key-1"]
+
+    code, s = server.call("DELETE", f"providers/{pid}")  # its bots go back to Anthropic
+    assert code == 200 and s["providers"] == [] and rt.record.provider == ""
+    rt._llm()
+    assert keys[-1] == "sk-ant-api03-test-0000000000000000000000"
+
+
 def test_oomi_color_is_a_setting_with_an_image_for_each_choice(server):
     _, s = server.call("GET", "settings")
     assert s["ghost_color"] == "white" and "pink" in s["ghost_colors"]
@@ -586,3 +615,27 @@ def test_the_app_prefers_a_steady_port_and_falls_back_when_it_is_taken(tmp_path,
     finally:
         first.stop()
         second.stop()
+
+
+def test_the_spending_limit_is_per_day(server):
+    code, bot = server.call("POST", "bots", {"name": "Spender"})
+    assert server.call("PATCH", f"bots/{bot['id']}", {"budget": 3})[0] == 200
+    rt = server.app.runtimes[bot["id"]]
+    server.llm.script += [resp(text("hi"))]
+    server.call("POST", f"bots/{bot['id']}/send", {"text": "hello"})
+    server.wait_idle(bot["id"])
+    spent = rt.agent.cost.spent_usd
+    assert spent > 0 and rt._spent_today() == pytest.approx(spent)
+    # what it spent earlier today still counts in a new conversation (or after reopening the app)
+    rt.submit("fresh").result(30)
+    server.llm.script += [resp(text("hi"))]
+    server.call("POST", f"bots/{bot['id']}/send", {"text": "hello"})
+    server.wait_idle(bot["id"])
+    assert rt.agent.cost.spent_usd > spent and rt.agent.cost.spent_usd == pytest.approx(rt._spent_today())
+    # after midnight it starts over, and extra allowed yesterday is dropped
+    rt.agent.cost.limit_usd = 10
+    rt.budget_day = "2000-01-01"
+    server.llm.script += [resp(text("again"))]
+    server.call("POST", f"bots/{bot['id']}/send", {"text": "hello again"})
+    server.wait_idle(bot["id"])
+    assert rt.agent.cost.limit_usd == 3

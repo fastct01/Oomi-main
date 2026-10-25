@@ -15,7 +15,7 @@ from ..agent import Agent, NullUI, load_session, quick_command_for
 from ..config import Config
 from ..health import Health
 from ..history import History
-from ..keychain import get_key
+from ..keychain import get_key, get_secret
 from ..llm import ModelError
 from ..account import AccountStore
 from ..memory import Memory, VoyageEmbedder
@@ -59,6 +59,7 @@ _NOTICE_ACTIONS = [
 
 
 def notice_for_app(msg: str) -> tuple:
+    msg = msg.replace("the session budget", "today's budget")  # in the app the limit is per bot per day
     for rx, action in _NOTICE_ACTIONS:
         if rx.search(msg):
             return rx.sub("", msg).strip(), action
@@ -121,6 +122,7 @@ class BotRuntime:
         self.turn_started = 0.0
         self.pending: dict = {}  # approval id -> {"event", "answer"}
         self.new_llm = False
+        self.budget_day = ""  # the day the agent's spending counts from (the limit starts over at midnight)
         self.running: Optional[Agent] = None  # the agent while a turn is executing (messages sent now join it)
         self.step = ""  # what it's doing right now, in a few words (the overview shows it)
         self.turn_reply_id: Optional[str] = None  # last reply written this turn (its cost is added at the end)
@@ -152,7 +154,7 @@ class BotRuntime:
         r = self.record
         return {
             "id": r.id, "name": r.name, "folder": r.folder, "avatar": r.avatar, "color": r.color, "trust": a.cfg.trust if a else r.trust,
-            "model": r.model, "effort": r.effort, "budget": r.budget, "private_folder": r.private_folder,
+            "model": r.model, "provider": r.provider, "effort": r.effort, "budget": r.budget, "private_folder": r.private_folder,
             "last_at": r.last_at, "preview": r.preview, "unread": r.unread, "status": self.status,
             "plan_pending": bool(a and a.prev_trust is not None),
             "tainted": bool(a and a.taint.active), "taint_sources": list(a.taint.sources) if a else [],
@@ -362,14 +364,16 @@ class BotRuntime:
         return cfg
 
     def _llm(self):
-        key = get_key("anthropic")
+        # A provider that has since been removed falls back to Anthropic
+        p = next((p for p in Config.load().providers if p.get("id") == self.record.provider), None) if self.record.provider else None
+        key = get_secret(f"provider:{p['id']}") if p else get_key("anthropic")
         if not key:
-            raise NoKey()
+            raise NoKey(f"There's no API key for {p['name']}. Remove it in Settings, Providers, and add it again." if p else "")
         if self.llm_factory:
             return self.llm_factory(key)
         from ..llm import LLM
 
-        return LLM(key)
+        return LLM(key, base_url=p["base_url"] if p else None)
 
     def ensure_agent(self, fresh: bool = False) -> Agent:
         """Worker thread only (the agent's SQLite connections belong to it)."""
@@ -388,8 +392,9 @@ class BotRuntime:
         skills = SkillStore(cfg.home / "bots" / self.record.id / "skills", shared=general_store(cfg.home))
         agent = Agent(cfg, llm, self.ui, folder, build_memory(cfg, self.record.id), skills, session,
                       history=History(cfg.home / "history.db"), health=Health(cfg.home))
+        self.budget_day = time.strftime("%Y-%m-%d")
+        agent.cost.spent_usd = self._spent_today()  # in the app, the budget is per day, across conversations
         if session:
-            agent.cost.spent_usd = 0.0  # in the app, the budget counts from when you opened it
             agent.cfg.trust = self.record.trust if self.record.trust in TRUST_LEVELS else agent.cfg.trust
         agent.session_allow.update(k for k in self.record.allow if isinstance(k, str) and k.startswith("shell:"))
         agent.on_always_allow = self._remember_allow
@@ -401,6 +406,21 @@ class BotRuntime:
                 self.record.sessions.append(agent.session_id)  # usage is counted per bot across all of them
             self.registry.save()
         return agent
+
+    def _spent_today(self) -> float:
+        sessions = {s for s in [*self.record.sessions, self.record.session_id] if s}
+        today = time.strftime("%Y-%m-%d")
+        rows = Health(self.home)._usage_rows(time.time() - 86400)
+        return sum(float(r.get("usd") or 0) for r in rows if r.get("day") == today and r.get("session") in sessions)
+
+    def _new_day(self, agent: Agent) -> None:
+        """A new day: the spending limit starts over, and any extra allowed yesterday is dropped."""
+        if self.budget_day == time.strftime("%Y-%m-%d"):
+            return
+        self.budget_day = time.strftime("%Y-%m-%d")
+        agent.cost.spent_usd = self._spent_today()
+        agent.cost.limit_usd = self.record.budget or Config.load().max_session_cost_usd
+        agent.cost.warned = False
 
     def _attach_watcher(self, agent: Agent) -> None:
         """Give the agent the team's antibodies once Atlas is reachable: proven fixes for errors it hits, and
@@ -447,12 +467,13 @@ class BotRuntime:
         self.set_status("working")
         try:
             agent = self.ensure_agent()
+            self._new_day(agent)
             if self.connectors is not None:
                 agent.set_app_tools(self.connectors.tools(off=set(self.record.apps_off)))
             self._attach_watcher(agent)
-        except NoKey:
+        except NoKey as e:
             self.turn_error = "no API key"
-            self._error("Add your Anthropic API key in Settings to start.", action="settings")
+            self._error(str(e) or "Add your Anthropic API key in Settings to start.", action="settings")
             self._go_idle()
             return
         except Exception as e:  # e.g. the folder is on a drive that isn't connected
@@ -599,7 +620,7 @@ class BotRuntime:
             elif a is not None and a.interrupted:
                 res = {"ok": True, "stopped": True}
             elif a is not None and a.cost.exhausted:
-                res = {"ok": False, "error": "the session budget is used up"}
+                res = {"ok": False, "error": "today's budget is used up"}
             else:
                 res = {"ok": True}
             if a is None or a.cfg.notify:

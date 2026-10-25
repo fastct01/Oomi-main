@@ -10,6 +10,7 @@
   --fg-2: #b4b4b4;
   --fg-3: #7d7d7d;
   --fg-4: #4f4f4f;
+  --red: #ff453a; /* only for deleting a bot */
   --font: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", Helvetica, Arial, sans-serif;
   --round: ui-rounded, "SF Pro Rounded", -apple-system, BlinkMacSystemFont, "Helvetica Neue", sans-serif;
   --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
@@ -283,6 +284,10 @@ button.row-line:hover { color: var(--fg); background: #0d0d0d; }
 .btn.quiet:hover { color: var(--fg); background: var(--s1); }
 .btn.big { height: 42px; padding: 0 22px; font-size: 14.5px; }
 .btn[disabled] { opacity: .4; pointer-events: none; }
+.btn.delete { color: var(--red); border-color: color-mix(in srgb, var(--red) 45%, transparent); }
+.btn.delete:hover { background: color-mix(in srgb, var(--red) 14%, transparent); border-color: var(--red); }
+.btn.primary.delete { background: var(--red); color: #fff; border-color: var(--red); }
+.btn.primary.delete:hover { background: color-mix(in srgb, var(--red) 85%, #000); }
 
 /* typing */
 .typing { align-self: flex-start; display: flex; align-items: center; gap: 10px; margin-top: 10px; max-width: 80%; }
@@ -307,7 +312,16 @@ button.row-line:hover { color: var(--fg); background: #0d0d0d; }
 }
 
 /* ---------- composer ---------- */
-.composer-wrap { padding: 0 28px 14px; max-width: calc(var(--chat-w) + 56px); width: 100%; margin: 0 auto; }
+.composer-wrap { padding: 0 28px 14px; max-width: calc(var(--chat-w) + 56px); width: 100%; margin: 0 auto; position: relative; }
+/* slash commands: the list above the message box while you type /name */
+.slash-menu { position: absolute; left: 28px; right: 28px; bottom: calc(100% - 6px); z-index: 20; max-height: 300px; overflow-y: auto;
+  background: var(--s1); border: 1px solid var(--line-2); border-radius: 14px; padding: 5px; box-shadow: 0 16px 48px rgba(0,0,0,.7); animation: pop .12s var(--ease); }
+.slash-menu button { display: flex; align-items: baseline; gap: 10px; width: 100%; padding: 7px 10px; border-radius: 9px; text-align: left; min-width: 0; }
+.slash-menu button.on, .slash-menu button:hover { background: var(--s2); }
+.slash-menu .nm, .slash-help .nm { font: 500 13px var(--mono); flex: none; }
+.slash-menu .arg { font: 12px var(--mono); color: var(--fg-4); flex: none; }
+.slash-menu .d { color: var(--fg-3); font-size: 12.5px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.slash-help .nm { min-width: 150px; }
 .composer-extras { display: flex; flex-wrap: wrap; gap: 6px; padding: 0 6px 8px; }
 .composer-extras:empty { display: none; }
 .pending-att { display: inline-flex; align-items: center; gap: 6px; height: 32px; padding: 0 6px 0 10px; border-radius: 10px; background: var(--s1); border: 1px solid var(--line-2); font-size: 12.5px; max-width: 240px; }
@@ -358,6 +372,11 @@ button.row-line:hover { color: var(--fg); background: #0d0d0d; }
 .tag.solid { background: var(--fg); color: #000; border-color: var(--fg); }
 .tag.owner { color: var(--fg-2, var(--fg)); border-color: var(--fg-4); }
 .tag.owner.shared { color: var(--fg-3); border-style: dashed; }
+.tag.owner, .chip { --av: 15px; }
+.tag.owner { display: inline-flex; align-items: center; gap: 4px; vertical-align: middle; }
+.tag-av.avatar, .chip .tag-av.avatar { width: var(--av); height: var(--av); }
+.tag-id { font: 10.5px var(--mono); opacity: .6; }
+.chip .tag-av.avatar { --av: 17px; margin-left: -4px; }
 .stat-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
 .stat { border: 1px solid var(--line); border-radius: 14px; padding: 12px 14px; }
 .stat .v { font: 700 22px/1.2 var(--round); letter-spacing: -0.01em; }
@@ -416,6 +435,8 @@ button.row-line:hover { color: var(--fg); background: #0d0d0d; }
 .menu kbd, .pal-item kbd, .li kbd { font: 500 11.5px var(--font); color: var(--fg-3); background: none; border: 0; white-space: nowrap; }
 .menu button:hover, .menu button.kb { background: var(--s2); }
 .menu button .d { display: block; color: var(--fg-3); font-size: 12px; }
+.menu button.delete { color: var(--red); }
+.menu button.delete:hover, .menu button.delete.kb { background: color-mix(in srgb, var(--red) 16%, transparent); }
 .menu button.on::after { content: "✓"; margin-left: 4px; color: var(--fg); }
 .menu hr { border: 0; border-top: 1px solid var(--line-2); margin: 5px 4px; }
 .menu .emojis { display: flex; gap: 2px; padding: 2px; }
@@ -849,6 +870,10 @@ html[data-steps="hidden"] .row.activity:not(.running) { display: none; }
 .app-logo { width: 38px; height: 38px; border-radius: 11px; flex: none; display: grid; place-items: center; color: #fff;
   font: 700 17px var(--round); box-shadow: inset 0 0 0 1px rgba(255,255,255,.12); text-shadow: 0 1px 1px rgba(0,0,0,.25); }
 .app-logo.sm { width: 26px; height: 26px; border-radius: 8px; font-size: 13px; }
+.app-logo .glyph { display: grid; width: 54%; height: 54%; filter: drop-shadow(0 1px 1px rgba(0,0,0,.2)); }
+.app-logo .glyph svg { width: 100%; height: 100%; }
+.app-logo.light { color: #1a1a1a; text-shadow: none; }
+.app-logo.light .glyph { filter: none; }
 .app-btn { flex: none; height: 30px; padding: 0 14px; border-radius: 999px; }
 .app-btn.on { color: var(--fg-2); gap: 5px; }
 .stack { display: flex; flex-direction: column; gap: 8px; }
@@ -871,5 +896,19 @@ html[data-steps="hidden"] .row.activity:not(.running) { display: none; }
 .routine .toggle { flex: none; }
 
 /* ---------- Settings, Antibodies ---------- */
-.antibody .rt { font: 13px/1.4 var(--mono); white-space: normal; overflow-wrap: anywhere; }
+.antibody { align-items: flex-start; }
+.antibody .ab-title { font-size: 15px; font-weight: 600; overflow-wrap: anywhere; }
+.antibody .ab-error {
+  margin-top: 6px; padding: 8px 10px; border-radius: 10px; background: #000; color: var(--fg-2); cursor: pointer;
+  font: 12px/1.45 var(--mono); white-space: pre-wrap; overflow-wrap: anywhere;
+}
+.antibody .ab-clamp { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+.antibody .ab-error.open .ab-clamp { display: block; -webkit-line-clamp: unset; }
+.antibody .rs { margin-top: 8px; }
+.antibody .ab-k { color: var(--fg-3); font-weight: 600; }
+.err-details { margin-top: 6px; font-size: 12px; color: var(--fg-3); }
+.err-details summary { cursor: pointer; }
+.err-details pre { margin: 6px 0 0; padding: 8px 10px; border-radius: 10px; background: #000; max-height: 200px; overflow: auto; font: 11.5px/1.45 var(--mono); white-space: pre-wrap; overflow-wrap: anywhere; user-select: text; -webkit-user-select: text; }
 .antibody .rs:not(.dim) { color: var(--fg-2); }
+.prompt-box { margin: 0; padding: 12px 14px; border: 1px solid var(--line); border-radius: 14px; background: var(--s1);
+  font: 12.5px/1.5 var(--mono); color: var(--fg-2); white-space: pre-wrap; overflow-wrap: anywhere; }

@@ -24,6 +24,40 @@
     skill_feedback: ["Skill", "Noted how a skill went", "Noted how skills went"],
     search_history: ["History", "Searched past conversations", "Searched past conversations N times"],
   };
+  // Slash commands typed in the composer: [name, argument hint, what it does]. They're handled here without a
+  // model call, except /init and /review, which send a prompt. Any other /name goes to the bot as before
+  // (a quick command from config.json, or just a message).
+  const SLASH = [
+    ["help", "", "Every slash command"],
+    ["clear", "", "Start a fresh conversation (also /new, /reset)"],
+    ["stop", "", "Stop what it's doing"],
+    ["plan", "[task]", "Look around without changing anything, then propose steps"],
+    ["go", "[changes]", "Approve the plan waiting above"],
+    ["compact", "", "Summarize older turns now to free up room"],
+    ["changes", "", "Files it changed, with diffs"],
+    ["undo", "[all]", "Undo the last change, or everything"],
+    ["model", "[name]", "Switch this bot's model"],
+    ["effort", "[level]", "low, medium, high, xhigh or max"],
+    ["provider", "[name]", "Switch this bot's provider"],
+    ["trust", "[level]", "read-only, project or full"],
+    ["budget", "[dollars]", "This bot's spending limit (0: the app default)"],
+    ["cost", "", "What this bot has spent today"],
+    ["status", "", "Health, spending and usage"],
+    ["memory", "", "What oomi remembers"],
+    ["remember", "<fact>", "Teach it something"],
+    ["skills", "", "Saved skills"],
+    ["taint", "", "Why commands are offline"],
+    ["untaint", "", "Turn the network back on for commands"],
+    ["settings", "", "This bot's settings"],
+    ["init", "", "Write a CLAUDE.md describing this folder"],
+    ["review", "", "Review the uncommitted changes in this folder"],
+  ];
+  const SLASH_ALIAS = { new: "clear", reset: "clear", config: "settings", usage: "cost" };
+  const SLASH_PROMPTS = {
+    init: "Look through this folder and write a CLAUDE.md at its top level: what the project is, how to build, run and test it, how it's laid out, and the conventions worth knowing. Keep it short. If there's one already, improve it rather than replace it.",
+    review: "Review the uncommitted changes in this folder (git diff, including new files). List bugs, risks and anything unclear, most important first. Don't change any files.",
+  };
+
   // A connected app's tool is "<app>__<tool>"; show the app's name
   function appLabel(name) {
     const i = name.indexOf("__");
@@ -69,7 +103,7 @@
       this.rendered = new Map(); this.order = [];
       this.lastTs = 0; this.lastKind = null; this.live = null; this.typingWhat = "";
       this.openRows = new Set(); this.closedRows = new Set(); this.openOutputs = new Set();
-      this.stick = true; this.attachments = []; this.reply = null; this.plan = false; this.planEdit = false;
+      this.stick = true; this.attachments = []; this.reply = null; this.plan = false; this.planEdit = false; this.hideSlash();
       this.loading = null; this.lastTurn = null; this.savedScroll = null;
       this.build();
     }
@@ -110,10 +144,14 @@
       this.stopBtn.addEventListener("click", () => this.stop());
       this.form.addEventListener("submit", (e) => { e.preventDefault(); this.send(); });
       this.jump.addEventListener("click", () => { this.stick = true; this.scrollDown(true); });
-      this.input.addEventListener("input", () => { this.autosize(); if (this.bot) O.store("draft." + this.bot, this.input.value); });
+      this.input.addEventListener("input", () => { this.autosize(); this.paintSlash(); if (this.bot) O.store("draft." + this.bot, this.input.value); });
       this.input.addEventListener("keydown", (e) => {
+        if (this.slashKey(e)) return;
         if (e.key === "Enter" && !e.shiftKey && !e.isComposing) { e.preventDefault(); this.send(); }
       });
+      this.input.addEventListener("blur", () => setTimeout(() => this.hideSlash(), 120));
+      this.slashEl = h("div", { class: "slash-menu hidden", role: "listbox", "aria-label": "Commands", onmousedown: (e) => e.preventDefault() });
+      this.composerWrap.prepend(this.slashEl);
       this.input.addEventListener("paste", (e) => {
         const files = [...(e.clipboardData ? e.clipboardData.files : [])];
         if (files.length) { e.preventDefault(); this.addFiles(files); }
@@ -462,7 +500,7 @@
         budget: ["Allow more", async () => { try { O.updateBot(await POST(`bots/${this.bot}/budget`, {})); O.toast("Budget raised"); } catch (e) { O.fail(e); } }],
         memory: ["Review", () => O.openSettings("memory")],
         status: ["See status", () => O.openSettings("status")],
-        settings: ["Open settings", () => O.openSettings("general")],
+        settings: ["Open settings", () => O.openSettings("providers")],
       };
       const a = ACT[it.action];
       return h("div", { class: `row notice ${it.level || "info"}`, dataset: { id: it.id } },
@@ -583,7 +621,7 @@
       const lt = this.lastTurn;
       const right = h("span", {}, lt && lt.bot === b.id && Date.now() - lt.at < 15000
         ? `${O.money(lt.cost)}, ${Math.round(lt.seconds)}s`
-        : b.cost ? `${O.money(b.cost)} since opening` : "");
+        : b.cost ? `${O.money(b.cost)} today` : "");
       this.hint.replaceChildren(left, right);
       this.renderExtras();
       this.renderSendButton();
@@ -607,11 +645,158 @@
       this.renderExtras();
       this.input.focus();
     }
+    // ---------------------------------------------------------------------------------------- slash commands
+    slashMatches() {
+      const m = this.input.value.match(/^\/([a-z-]*)$/i); // the command name, before any argument
+      if (!m || !this.bot) return [];
+      const w = m[1].toLowerCase();
+      return SLASH.filter(([name]) => name.startsWith(w));
+    }
+    paintSlash() {
+      const items = this.slashMatches();
+      if (!items.length) return this.hideSlash();
+      this.slashSel = Math.min(this.slashSel || 0, items.length - 1);
+      this.slashEl.replaceChildren(...items.map(([name, arg, desc], i) => h("button", { type: "button", role: "option", class: i === this.slashSel ? "on" : "",
+        "aria-selected": String(i === this.slashSel), onclick: () => this.pickSlash(items[i]) },
+        h("span", { class: "nm" }, "/" + name), arg ? h("span", { class: "arg" }, arg) : null, h("span", { class: "d" }, desc))));
+      this.slashEl.classList.remove("hidden");
+      const on = this.slashEl.querySelector(".on");
+      if (on) on.scrollIntoView({ block: "nearest" });
+    }
+    hideSlash() { if (this.slashEl) { this.slashEl.classList.add("hidden"); this.slashSel = 0; } }
+    // A command without an argument runs straight away; one that takes an argument waits for it.
+    pickSlash([name, arg]) {
+      this.input.value = "/" + name + (arg ? " " : "");
+      this.hideSlash(); this.autosize(); this.input.focus();
+      if (!arg) this.send();
+    }
+    slashKey(e) {
+      if (!this.slashEl || this.slashEl.classList.contains("hidden") || e.isComposing) return false;
+      const items = this.slashMatches();
+      if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+        this.slashSel = (this.slashSel + (e.key === "ArrowDown" ? 1 : items.length - 1)) % items.length;
+        this.paintSlash();
+      } else if (e.key === "Tab" || (e.key === "Enter" && !e.shiftKey)) {
+        this.pickSlash(items[this.slashSel] || items[0]);
+      } else if (e.key === "Escape") {
+        this.hideSlash();
+        e.stopPropagation(); // close the menu, don't stop the bot
+      } else return false;
+      e.preventDefault();
+      return true;
+    }
+    // True when the command was handled here, a string to send to the bot instead, or false for an unknown /name.
+    async slash(name, arg, b) {
+      name = SLASH_ALIAS[name] || name;
+      if (SLASH_PROMPTS[name]) return SLASH_PROMPTS[name];
+      if (!SLASH.some(([n]) => n === name)) return false;
+      const s = S.settings.models ? S.settings : (S.settings = await GET("settings"));
+      const set = async (patch, done) => { await O.setBot(patch, b.id); O.toast(done, 1800); };
+      const idle = () => b.status === "idle" || (O.toast(`Wait until ${b.name} finishes, or stop it first (Esc).`, 2600), false);
+      switch (name) {
+        case "help":
+          O.modal((box, close) => box.append(h("h3", {}, "Slash commands"),
+            h("div", { class: "list slash-help" }, SLASH.map(([n, a, d]) => h("div", { class: "li" }, h("span", { class: "nm" }, `/${n}${a ? " " + a : ""}`), h("div", { class: "grow small" }, d)))),
+            h("p", { class: "small-note", style: "margin-top:10px" }, "Type / in the message box to pick one. Quick commands from your config.json work too."),
+            h("div", { class: "foot" }, h("button", { type: "button", class: "btn primary", onclick: close }, "Done"))));
+          break;
+        case "clear":
+          if (!idle()) break;
+          O.updateBot(await POST(`bots/${b.id}/fresh`)); O.ws.reload(b.id); O.toast("Fresh conversation", 1500);
+          break;
+        case "stop": await this.stop(); break;
+        case "plan":
+          this.plan = true; this.renderComposerState();
+          if (arg) return arg; // send the task with plan first
+          break;
+        case "go": await this.goPlan(arg); break;
+        case "compact": {
+          if (!idle()) break;
+          O.toast("Summarizing older turns…", 2000);
+          const r = await POST(`bots/${b.id}/compact`);
+          O.toast(r.compacted ? "Older turns summarized" : "Nothing to summarize yet", 2000);
+          break;
+        }
+        case "changes": O.openDrawer("changes"); break;
+        case "undo": {
+          if (!idle()) break;
+          const undo = async (confirm) => {
+            const r = await POST(`bots/${b.id}/undo`, { all: arg === "all", confirm });
+            if (r.needs_confirm) return O.confirmBox("Restore the snapshot?", `This will ${r.needs_confirm}, removing files created since then, including any you made yourself.`, "Restore", () => undo(true).catch(O.fail));
+            if (r.error) O.toast(`Stopped: ${r.error}`, 5000);
+            else O.toast(r.done.length ? `Undid ${O.plural(r.done.length, "1 step", "N steps")}` : "Nothing to undo");
+            O.refreshDrawer("changes", b.id);
+          };
+          await undo(false);
+          break;
+        }
+        case "model": {
+          if (!arg) { O.openDrawer("bot"); break; }
+          const w = arg.toLowerCase();
+          const m = w === "default" ? "" : s.models.find((x) => x === w) || s.models.find((x) => O.modelName(x).toLowerCase().includes(w) || x.includes(w));
+          if (m === undefined) { O.toast(`No model called ${arg}. Try: ${s.models.map(O.modelName).join(", ")}, default.`, 4000); break; }
+          await set({ model: m }, `${b.name} now uses ${m ? O.modelName(m) : `the app default (${O.modelName(s.model)})`}`);
+          break;
+        }
+        case "effort": {
+          const e = arg.toLowerCase();
+          if (!arg) { O.openDrawer("bot"); break; }
+          if (e !== "default" && !s.efforts.includes(e)) { O.toast(`Effort is one of: ${s.efforts.join(", ")}, default.`, 3000); break; }
+          await set({ effort: e === "default" ? "" : e }, `Effort: ${e}`);
+          break;
+        }
+        case "provider": {
+          const ps = s.providers || [];
+          if (!arg) { O.toast(`${b.name} uses ${(ps.find((p) => p.id === b.provider) || { name: "Anthropic" }).name}. Options: Anthropic${ps.map((p) => ", " + p.name).join("")}.`, 4000); break; }
+          const w = arg.toLowerCase();
+          const p = ["anthropic", "default"].includes(w) ? { id: "", name: "Anthropic" } : ps.find((x) => x.name.toLowerCase().startsWith(w));
+          if (!p) { O.toast(`No provider called ${arg}. Add one in Settings, Providers.`, 3000); break; }
+          await set({ provider: p.id }, `${b.name} now uses ${p.name}`);
+          break;
+        }
+        case "trust": {
+          const t = arg.toLowerCase();
+          if (!arg) { O.toast(`Trust is ${O.TRUST[b.trust] ? O.TRUST[b.trust].label : b.trust}. Options: read-only, project, full.`, 3000); break; }
+          if (!O.TRUST[t]) { O.toast("Trust is one of: read-only, project, full.", 3000); break; }
+          if (t === "full" && b.trust !== "full") O.confirmBox("Turn off the sandbox?", "With full trust, commands run with your full access to files and the network. Risky ones still ask first.", "Use full trust", () => set({ trust: t }, "Trust: Full").catch(O.fail));
+          else await set({ trust: t }, `Trust: ${O.TRUST[t].label}`);
+          break;
+        }
+        case "budget": {
+          const v = Number(arg.replace(/^\$/, ""));
+          if (!arg || !Number.isFinite(v) || v < 0 || v > 1000) { O.toast("Give an amount in dollars, like /budget 5 (0 uses the app default).", 3000); break; }
+          await set({ budget: v }, v ? `Spending limit: ${O.money(v)}` : "Spending limit: app default");
+          break;
+        }
+        case "cost": O.toast(`${b.name} has spent ${O.money(b.cost || 0)} today${b.limit ? ` of its ${O.money(b.limit)} limit` : ""}.`, 3500); break;
+        case "status": O.openSettings("status"); break;
+        case "memory": O.openSettings("memory"); break;
+        case "remember":
+          if (!arg) { O.toast("Say what to remember, like /remember I use pnpm, never npm.", 3000); break; }
+          await POST("memory/add", { text: arg }); O.toast("Remembered", 1500);
+          break;
+        case "skills": O.openSettings("skills"); break;
+        case "taint":
+          O.toast(b.tainted ? `Commands are offline because untrusted content came in: ${(b.taint_sources || []).join("; ") || "a web page or command"}. /untaint turns the network back on.` : "Commands have network access.", 5000);
+          break;
+        case "untaint": O.updateBot(await POST(`bots/${b.id}/untaint`)); O.toast("Network allowed again", 1500); break;
+        case "settings": O.openDrawer("bot"); break;
+      }
+      return true;
+    }
     async send() {
       const b = bot(this.bot);
       if (!b) return;
       const ta = this.input;
-      const text = ta.value.trim();
+      let text = ta.value.trim();
+      this.hideSlash();
+      const cmd = !this.planEdit && !this.attachments.length && text.match(/^\/([a-z-]+)(?:\s+([\s\S]*))?$/i);
+      if (cmd) {
+        let r;
+        try { r = await this.slash(cmd[1].toLowerCase(), (cmd[2] || "").trim(), b); } catch (e) { O.fail(e); r = true; }
+        if (r === true) { ta.value = ""; this.autosize(); O.store("draft." + b.id, null); this.renderComposerState(); return; }
+        if (typeof r === "string") text = r;
+      }
       if (this.attachments.some((a) => !a.id)) return O.toast("Still uploading…");
       if (!text && !this.attachments.length) return;
       if (this.planEdit && this.planEdit !== b.id) this.planEdit = false;
@@ -636,6 +821,7 @@
     async stop() { if (this.bot) { try { await POST(`bots/${this.bot}/stop`); } catch (e) { O.fail(e); } } }
     // Esc in this pane: back out of whatever is half-done, or stop the bot. True if it did something.
     escape() {
+      if (this.slashEl && !this.slashEl.classList.contains("hidden")) { this.hideSlash(); return true; }
       if (this.planEdit) { this.planEdit = false; this.renderComposerState(); return true; }
       if (this.reply) { this.reply = null; this.renderExtras(); return true; }
       const b = bot(this.bot);

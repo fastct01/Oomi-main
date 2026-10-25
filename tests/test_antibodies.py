@@ -186,6 +186,25 @@ def test_the_app_saves_fixes_for_review_and_shares_them(server, db, tmp_path):
     assert server.call("POST", "antibodies/match", {"error": ""})[0] == 400
 
 
+def test_a_fix_added_by_hand_is_shared_matched_and_can_be_deleted(server, db):
+    server.app.connect_team(db=db)
+    server.app.team.use_atlas_search = False  # mongomock has no Atlas Search
+    assert server.call("POST", "antibodies/add", {"error_type": "AttributeError", "error_message": "", "fix": "x"})[0] == 400
+    assert server.call("POST", "antibodies/add", {"error_message": "boom", "fix": " "})[0] == 400
+    code, st = server.call("POST", "antibodies/add", {
+        "error_type": "AttributeError", "error_message": "module 'collections' has no attribute 'Mapping'",
+        "fix": "Import Mapping from collections.abc.", "command": "pytest -q", "project": "invoices"})
+    assert code == 200 and st["pending"] == []
+    d = st["approved"][0]
+    assert d["error_text"] == "AttributeError: module 'collections' has no attribute 'Mapping'" and d["source"] == "manual"
+    assert d["proven_by"]["command"] == "pytest -q" and d["project"] == "invoices"
+    _, m = server.call("POST", "antibodies/match", {"error": d["error_text"]})
+    assert m["match"]["fix"] == "Import Mapping from collections.abc."
+    code, st = server.call("DELETE", f"antibodies/{d['id']}")
+    assert code == 200 and st["approved"] == []
+    assert server.call("DELETE", f"antibodies/{d['id']}")[0] == 404
+
+
 def test_the_app_without_atlas_says_how_to_connect(server):
     code, st = server.call("GET", "antibodies")
     assert code == 200 and st["connected"] is False

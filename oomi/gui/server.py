@@ -18,6 +18,7 @@ import subprocess
 import sys
 import threading
 import time
+import traceback
 from collections import deque
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -27,8 +28,9 @@ from urllib.parse import parse_qs, unquote, urlparse
 from .. import __version__
 from ..config import GHOST_COLORS, Config, oomi_home
 from ..health import Health
-from ..keychain import KEY_RX, get_key, store_key
+from ..keychain import KEY_RX, delete_secret, get_key, get_secret, store_key, store_secret
 from ..account import AccountError, AccountStore
+from ..cloud import DataSync, apply_pending_restore
 from ..connectors import CATEGORIES, ConnectorStore, McpError
 from ..memory import Memory
 from ..schedule import ScheduleError, ScheduleStore, parse_when, schedule_json
@@ -216,6 +218,10 @@ class App:
         for sub in ("skills", "spill", "sessions", "backups", "logs", "bots", "uploads"):
             (self.home / sub).mkdir(parents=True, exist_ok=True)
         try:
+            apply_pending_restore(self.home)  # a backup downloaded last time goes in place before anything opens
+        except OSError:
+            traceback.print_exc()
+        try:
             self.home.chmod(0o700)  # chats, memories and attachments: yours only, not other accounts on the Mac
         except OSError:
             pass
@@ -238,6 +244,9 @@ class App:
         self.runtimes: dict = {}
         self.connectors = ConnectorStore(self.home)
         self.account = AccountStore(self.home)
+        self.data_sync = DataSync(self.home, self.account)
+        self.backup_stop = threading.Event()
+        threading.Thread(target=self._backup_loop, name="oomi-backup", daemon=True).start()
         # The team's antibodies on MongoDB Atlas: connected in the background so a slow cluster never holds up
         # the window; bots pick the store up on their next request.
         self.team = None
@@ -440,6 +449,12 @@ class App:
             rec.model = body["model"] or ""
             if rt.agent is not None:
                 rt.agent.cfg.model = rec.model or Config.load().model
+        if "provider" in body:
+            if body["provider"] and not any(p["id"] == body["provider"] for p in Config.load().providers):
+                raise ApiError(400, "Unknown provider.")
+            if (body["provider"] or "") != rec.provider:
+                rec.provider = body["provider"] or ""
+                rt.new_llm = True  # used from its next message
         if "effort" in body:
             if body["effort"] and body["effort"] not in EFFORTS:
                 raise ApiError(400, "Unknown effort level.")
@@ -485,6 +500,7 @@ class App:
         st = self.create_bot({"name": name, "folder": folder, "trust": src.trust})
         rec = self.runtimes[st["id"]].record
         rec.model, rec.effort, rec.budget, rec.instructions = src.model, src.effort, src.budget, src.instructions
+        rec.provider = src.provider
         rec.allow, rec.section = list(src.allow), src.section
         self.registry.save()
         self.bus.emit({"type": "bots"})
@@ -687,8 +703,9 @@ class App:
             "key_from_env": bool(os.environ.get("ANTHROPIC_API_KEY")),
             "model": cfg.model, "fallback_models": cfg.fallback_models, "effort": cfg.effort,
             "max_session_cost_usd": cfg.max_session_cost_usd, "web_search": cfg.web_search, "notify": cfg.notify,
-            "memory_learn": cfg.memory_learn, "trust": cfg.trust, "models": list(MODELS), "efforts": list(EFFORTS),
-            "trust_levels": list(TRUST_LEVELS),
+            "memory_learn": cfg.memory_learn, "models": list(MODELS), "efforts": list(EFFORTS),
+            "providers": [{"id": p["id"], "name": p["name"], "base_url": p["base_url"], "has_key": bool(get_secret(f"provider:{p['id']}"))}
+                          for p in cfg.providers],
             "small_model": cfg.small_model, "show_thinking": cfg.show_thinking,
             "deny_commands": list(cfg.deny_commands), "protected_write_names": list(cfg.protected_write_names),
             "redact_secrets": cfg.redact_secrets, "approval_timeout_minutes": cfg.approval_timeout_minutes,
@@ -716,10 +733,6 @@ class App:
             if body["effort"] not in EFFORTS:
                 raise ApiError(400, "Unknown effort level.")
             updates["effort"] = body["effort"]
-        if "trust" in body:
-            if body["trust"] not in TRUST_LEVELS:
-                raise ApiError(400, "Unknown trust level.")
-            updates["trust"] = body["trust"]
         if "max_session_cost_usd" in body:
             try:
                 v = float(body["max_session_cost_usd"])
@@ -775,7 +788,7 @@ class App:
                 rt.apply_settings(cfg)
         return self.settings()
 
-    MANAGED = ("model", "fallback_models", "effort", "trust", "max_session_cost_usd", "web_search", "notify",
+    MANAGED = ("model", "fallback_models", "effort", "max_session_cost_usd", "web_search", "notify",
                "memory_learn", "show_thinking", "redact_secrets", "read_project_files", "notify_approval", "notify_done",
                "notify_failed", "keep_awake", "small_model", "notify_sound", "approval_timeout_minutes",
                "max_task_minutes", "max_steps_per_turn", "compact_at_tokens", "deny_commands", "protected_write_names")
@@ -821,6 +834,43 @@ class App:
             rt.new_llm = True
         Health(self.home).event("key_ok")
         return {"ok": True, "message": message, "settings": self.settings()}
+
+    def add_provider(self, body: dict) -> dict:
+        """Another provider that speaks the Messages API. Its key isn't checked here: gateways differ in what
+        they answer besides messages, so a wrong key shows on the first message of a bot that uses it."""
+        name = " ".join(str(body.get("name") or "").split())[:40]
+        if not name:
+            raise ApiError(400, "Give the provider a name.")
+        url = str(body.get("base_url") or "").strip().rstrip("/")
+        url = url[:-3] if url.endswith("/v1") else url  # the SDK adds /v1/messages itself
+        local = re.match(r"http://(localhost|127\.0\.0\.1|\[::1\])(:\d+)?(/|$)", url)
+        if not (re.match(r"https://[^\s/]+", url) or local) or len(url) > 300 or re.search(r"\s", url):
+            raise ApiError(400, "Use the provider's https:// address, like https://gateway.example.com.")
+        key = str(body.get("key") or "").strip()
+        if not key or len(key) > 500 or re.search(r"\s", key):
+            raise ApiError(400, "Paste the provider's API key, with no spaces.")
+        providers = Config.load().providers
+        if any(p["name"].lower() == name.lower() for p in providers) or name.lower() == "anthropic":
+            raise ApiError(400, f"There's already a provider called {name}.")
+        pid = new_id("p")
+        if not store_secret(f"provider:{pid}", key):
+            raise ApiError(500, "Couldn't save the key to your Keychain.")
+        _write_config_file({"providers": providers + [{"id": pid, "name": name, "base_url": url}]})
+        return self.settings()
+
+    def remove_provider(self, pid: str) -> dict:
+        providers = Config.load().providers
+        if not any(p["id"] == pid for p in providers):
+            raise ApiError(404, "No such provider.")
+        _write_config_file({"providers": [p for p in providers if p["id"] != pid]})
+        delete_secret(f"provider:{pid}")
+        for rt in list(self.runtimes.values()):  # its bots go back to Anthropic
+            if rt.record.provider == pid:
+                rt.record.provider = ""
+                rt.new_llm = True
+                self.bus.emit({"type": "bot", "bot": rt.record.id, "bot_state": rt.state()})
+        self.registry.save()
+        return self.settings()
 
     # -- status ----------------------------------------------------------------------------------------------
     def status(self) -> dict:
@@ -942,12 +992,15 @@ class App:
             return {"connected": False, "error": self.team_error}
         mode = (atlas.MODES[min(store.searcher.mode_index, len(atlas.MODES) - 1)] if store.use_atlas_search
                 else "local")
-        st = store.stats()
+        try:  # connected at startup, but the cluster can stop answering since (network, Atlas IP access list)
+            st = store.stats()
+            pending, approved = store.list("pending", 50), store.list("approved", 100)
+        except Exception as e:  # noqa: BLE001
+            return {"connected": False, "error": f"{type(e).__name__}: {e}"}
         return {"connected": True, "team": store.team, "user": store.user, "mode": mode,
                 "search_error": store.searcher.last_error if store.use_atlas_search else "",
                 "stats": {k: st.get(k, 0) for k in ("antibodies", "cures", "saved_seconds", "saved_usd")},
-                "pending": [public(d) for d in store.list("pending", 50)],
-                "approved": [public(d) for d in store.list("approved", 100)]}
+                "pending": [public(d) for d in pending], "approved": [public(d) for d in approved]}
 
     # -- connected apps -----------------------------------------------------------------------------------------
     def apps(self) -> dict:
@@ -1055,6 +1108,19 @@ class App:
         else:
             raise ApiError(400, "Showing folders works on a Mac.")
 
+    def _backup_loop(self) -> None:
+        """Copy oomi's data to Atlas a couple of minutes after starting, then every 15 minutes, while sync is on."""
+        wait = 120
+        while not self.backup_stop.wait(wait):
+            wait = 15 * 60
+            try:
+                if self.data_sync.enabled:
+                    self.data_sync.push(auto=True)
+            except AccountError:
+                pass  # shown in Settings, Account
+            except Exception:  # never let one bad pass stop the backups that follow
+                traceback.print_exc()
+
     def shutdown(self) -> None:
         """Stop every bot, let each learn from its conversation and save. Safe to call more than once."""
         with self.lock:
@@ -1069,6 +1135,18 @@ class App:
             t.start()
         for t in threads:
             t.join(20)
+        self.backup_stop.set()
+        if self.data_sync.enabled:  # a last copy with what they just saved
+            t = threading.Thread(target=lambda: self._quiet(lambda: self.data_sync.push(auto=True)), daemon=True)
+            t.start()
+            t.join(20)
+
+    @staticmethod
+    def _quiet(fn) -> None:
+        try:
+            fn()
+        except AccountError:
+            pass
 
 
 # ---------------------------------------------------------------------------------------------------------
@@ -1235,12 +1313,39 @@ class Handler(BaseHTTPRequestHandler):
                 raise ApiError(400, "That antibody isn't waiting for review any more.")
             app.bus.emit({"type": "antibodies"})
             return self._json(app.antibodies_state())
+        if (method, path) == ("POST", "add"):
+            # A fix you know works, typed in by hand. You're the reviewer, so it's shared straight away.
+            from ..fingerprint import redact, signature
+
+            kind = " ".join(str(b.get("error_type") or "").split())[:80]
+            message = str(b.get("error_message") or "").strip()[:4000]
+            fix = " ".join(str(b.get("fix") or "").split())[:500]
+            command = " ".join(str(b.get("command") or "").split())[:300]
+            if not message:
+                raise ApiError(400, "Paste the error message.")
+            if not fix:
+                raise ApiError(400, "Say what fixed it.")
+            error = redact(f"{kind}: {message}" if kind and not message.startswith(kind) else message)
+            try:
+                store.save({"error_text": error, "signature": signature(error), "command": redact(command), "fix": redact(fix),
+                            "steps": [], "proven_by": {"command": redact(command), "exit_code": 0} if command else None,
+                            "project": " ".join(str(b.get("project") or "").split())[:80], "source": "manual"}, approved=True)
+            except Exception as e:  # noqa: BLE001 - Atlas unreachable
+                raise ApiError(400, f"Couldn't save the fix: {e}"[:300])
+            app.bus.emit({"type": "antibodies"})
+            return self._json(app.antibodies_state())
+        if method == "DELETE" and re.fullmatch(r"[0-9a-f]{24}", path):
+            if not store.delete(path):
+                raise ApiError(404, "That fix is already gone.")
+            app.bus.emit({"type": "antibodies"})
+            return self._json(app.antibodies_state())
         raise ApiError(404, "Not found.")
 
     def _account(self, method: str, path: str, b: dict) -> None:
         """Your profile, and its copy in MongoDB Atlas. A changed profile reaches each bot's next conversation."""
         acct = self.app.account
         try:
+            data = self.app.data_sync
             if (method, path) == ("GET", "account"):
                 out = acct.state()
             elif (method, path) == ("PATCH", "account"):
@@ -1251,14 +1356,29 @@ class Handler(BaseHTTPRequestHandler):
                 threading.Thread(target=self.app.connect_team, daemon=True).start()  # the same cluster holds antibodies
             elif (method, path) == ("POST", "account/sync/push"):
                 out = acct.push()
+                if data.enabled:
+                    data.push()
             elif (method, path) == ("POST", "account/sync/pull"):
                 out = acct.pull(str(b.get("account_id") or ""))
             elif (method, path) == ("POST", "account/sync/disconnect"):
                 out = acct.disconnect()
+            elif (method, path) == ("GET", "account/data/remote"):
+                out = {"remote": data.remote()}
+            elif (method, path) == ("POST", "account/data/enabled"):
+                data.set_enabled(bool(b.get("on")))
+                out = acct.state()
+            elif (method, path) == ("POST", "account/data/restore"):
+                data.restore()
+                out = acct.state()
+            elif (method, path) == ("POST", "account/data/cancel_restore"):
+                data.cancel_restore()
+                out = acct.state()
             else:
                 raise ApiError(404, "Not found.")
         except AccountError as e:
             raise ApiError(400, str(e))
+        if "profile" in out:
+            out["data"] = data.state()
         self._json(out)
 
     def _apps(self, method: str, path: str, b: dict) -> None:
@@ -1400,6 +1520,10 @@ class Handler(BaseHTTPRequestHandler):
             self._json(app.save_settings(self._body()))
         elif key == ("POST", "key"):
             self._json(app.save_key(str(self._body().get("key") or "")))
+        elif key == ("POST", "providers"):
+            self._json(app.add_provider(self._body()))
+        elif method == "DELETE" and re.fullmatch(r"providers/p[0-9a-f]{12}", path):
+            self._json(app.remove_provider(path.split("/", 1)[1]))
         elif key == ("GET", "status"):
             self._json(app.status())
         elif key == ("GET", "usage"):
@@ -1560,8 +1684,8 @@ class Handler(BaseHTTPRequestHandler):
                 raise ApiError(409, "Wait until it finishes, or stop it first.")
             try:
                 done = rt.submit("compact").result(300)
-            except NoKey:
-                raise ApiError(400, "Add your Anthropic API key in Settings first.")
+            except NoKey as e:
+                raise ApiError(400, str(e) or "Add your Anthropic API key in Settings first.")
             except Exception as e:  # noqa: BLE001 - the model may be unavailable
                 raise ApiError(502, f"Couldn't compact: {e}")
             self._json({"compacted": done, "context": app.context(bot_id)})

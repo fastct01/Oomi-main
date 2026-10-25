@@ -3,7 +3,8 @@ bots can know, kept in ~/.oomi/account.json and, if you connect one, mirrored to
 
 * This Mac is the source of truth; the cloud is a copy. Saving writes here first, then pushes. Pulling replaces
   the profile here with the cloud's, so a second Mac can start from the same one.
-* Only the profile is synced. API keys, app sign-ins and conversations never leave the Mac.
+* This file syncs the profile only; cloud.py backs up everything else to the same database. API keys and app
+  sign-ins never leave the Mac.
 * The Atlas connection string holds a password, so it lives in the Keychain, never in account.json.
 * pymongo is optional (`pip install 'oomi[cloud]'`) and imported only when sync is used.
 """
@@ -93,10 +94,11 @@ class MongoMirror:
     def __init__(self, uri: str, database: str, collection: str, client_factory: Optional[Callable] = None):
         self.uri, self.database, self.collection = uri, database, collection
         self.client_factory = client_factory
-        self._coll = None
+        self._db = None
 
-    def _collection(self):
-        if self._coll is None:
+    def database_handle(self):
+        """The database itself: the backup of everything else (cloud.py) keeps its own collections next to this one."""
+        if self._db is None:
             if self.client_factory is not None:
                 client = self.client_factory(self.uri)
             else:
@@ -104,9 +106,15 @@ class MongoMirror:
                     from pymongo import MongoClient
                 except ImportError:
                     raise AccountError("Cloud sync needs pymongo. Install it with: pip install 'oomi[cloud]'")
-                client = MongoClient(self.uri, serverSelectionTimeoutMS=8000, appname="oomi")
-            self._coll = client[self.database][self.collection]
-        return self._coll
+                try:
+                    client = MongoClient(self.uri, serverSelectionTimeoutMS=8000, appname="oomi")
+                except Exception as e:  # noqa: BLE001  (e.g. offline: the mongodb+srv:// DNS lookup fails right here)
+                    raise AccountError(f"Couldn't reach the database: {str(e)[:200]}")
+            self._db = client[self.database]
+        return self._db
+
+    def _collection(self):
+        return self.database_handle()[self.collection]
 
     def ping(self) -> None:
         try:

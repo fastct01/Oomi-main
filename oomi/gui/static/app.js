@@ -621,7 +621,7 @@
         return parts;
       })()));
     const right = h("div", { class: "sb-right" });
-    if (spent) right.append(h("span", { class: "sb-item quiet", title: "Spent since you opened oomi" }, O.money(spent)));
+    if (spent) right.append(h("span", { class: "sb-item quiet", title: "Spent today" }, O.money(spent)));
     if (W.mode === "advanced" && W.zoom) right.append(h("button", { type: "button", class: "sb-item on", title: "Zoom out (⌘⇧↩)", onclick: () => toggleZoom() }, icon("zoom", 13), "Zoomed in"));
     if (W.mode !== "single") right.append(h("button", { type: "button", class: "sb-item", title: "Arrange panes", onclick: (e) => layoutMenu(e.currentTarget) }, icon("grid", 13), "Layout"));
     bar.replaceChildren(left, right);
@@ -645,7 +645,7 @@
     if (S.native.reveal || O.MAC) {
       entries.push("-", { label: "Show folder", icon: "folder", run: () => POST(`bots/${id}/reveal`).catch(O.fail) });
     }
-    entries.push("-", { label: "Delete bot", icon: "trash", run: () => O.deleteBot(id) });
+    entries.push("-", { label: "Delete bot", icon: "trash", delete: true, run: () => O.deleteBot(id) });
     if (pos) O.openMenu(null, entries, pos);
     else O.openMenu(anchor, entries, { align: anchor && anchor.classList.contains("name-pill") ? "center" : "right" });
   };
@@ -722,7 +722,7 @@
       { icon: "check", label: "Mark all read", run: () => POST("bots/read-all").catch(O.fail) },
       { icon: "upload", label: "Import a bot", run: O.importBot },
       { icon: "side", label: "Show or hide the sidebar", keys: "⌘B", run: toggleSidebar },
-      { icon: "gear", label: "Settings", keys: "⌘,", run: () => O.openSettings("general") },
+      { icon: "gear", label: "Settings", keys: "⌘,", run: () => O.openSettings("providers") },
       { icon: "eye", label: "Settings: Display", words: "text size density width timestamps", run: () => O.openSettings("display") },
       { icon: "bell", label: "Settings: Notifications", words: "sound alerts", run: () => O.openSettings("notifications") },
       { icon: "lock", label: "Settings: Safety and limits", words: "block list protected secrets timeout", run: () => O.openSettings("safety") },
@@ -870,7 +870,7 @@
       }
       if (k === "k") return run(() => (O.paletteOpen() ? O.closePalette() : O.palette()));
       if (k === "n") return run(() => O.newBot());
-      if (k === ",") return run(() => O.openSettings("general"));
+      if (k === ",") return run(() => O.openSettings("providers"));
       if (k === ".") return run(O.toggleOverview);
       if (k === "/") return run(() => O.openSettings("shortcuts"));
       if (k === "b") return run(toggleSidebar);
@@ -891,7 +891,7 @@
     $("#btn-search").addEventListener("click", () => O.palette());
     $("#btn-side-menu").addEventListener("click", (e) => sideMenu(e.currentTarget));
     $("#btn-me").addEventListener("click", () => O.openSettings("account"));
-    $("#btn-settings").addEventListener("click", () => O.openSettings("general"));
+    $("#btn-settings").addEventListener("click", () => O.openSettings("providers"));
     wireDrops();
     wireKeys();
     window.addEventListener("focus", () => reportFocus());

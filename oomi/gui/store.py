@@ -40,8 +40,9 @@ class BotRecord:
     color: str = ""  # one of GHOST_COLORS; empty: the app's color
     trust: str = "project"
     model: str = ""  # empty: the app default
+    provider: str = ""  # the id of one of Config.providers; empty: Anthropic
     effort: str = ""
-    budget: float = 0.0  # 0: the app default (dollars per app launch)
+    budget: float = 0.0  # 0: the app default (dollars per day)
     session_id: str = ""
     sessions: list = field(default_factory=list)  # every conversation it has had (Start fresh begins a new one)
     pinned: bool = False

@@ -96,6 +96,9 @@
     const name = h("input", { value: b.name, maxlength: "40" });
     name.addEventListener("change", () => set({ name: name.value }).then(() => O.toast("Renamed", 1000)).catch(O.fail));
     body.append(O.field("Name", name));
+    body.append(O.field("ID", h("div", { class: "row-inline" }, h("div", { class: "grow mono-line" }, b.id),
+      h("button", { type: "button", class: "btn quiet", onclick: () => O.copyText(b.id) }, "Copy")),
+    `Shown as ${O.shortId(b.id)} next to its name, to tell it apart from bots with the same name or color.`));
     body.append(O.field("Color", O.colorPicker(b.color || O.appColor(), (c) => set({ color: c }).then(redraw), { custom: true })));
     // A bot made without a folder keeps its own private one, so there is nothing to show or change
     if (!b.private_folder) body.append(O.field("Folder", h("div", { class: "row-inline" }, h("div", { class: "grow mono-line" }, O.tildify(b.folder)),
@@ -122,11 +125,15 @@
     body.append(h("div", { class: "field", dataset: { key: "instructions" } }, h("span", { class: "lab" }, "Instructions"), instr,
       h("div", { class: "row-inline" }, h("span", { class: "help grow" }, "Standing instructions this bot always follows. CLAUDE.md and AGENTS.md in its folder are read too (see Settings, Safety)."), instrSave)));
 
+    // Anthropic is always there; with another provider added, each bot picks one
+    if (s.providers && s.providers.length) body.append(O.field("Provider",
+      O.select([["", "Anthropic"]].concat(s.providers.map((p) => [p.id, p.name])), b.provider || "", (v) => set({ provider: v }).then(() => O.toast("Used from its next message.", 1600)).catch(O.fail)),
+      "Where its requests go. Manage providers in Settings, Providers."));
     body.append(O.field("Model", O.select([["", `App default (${O.modelName(s.model)})`]].concat(s.models.map((m) => [m, O.modelName(m)])), b.model, (v) => set({ model: v }))));
     body.append(O.field("Effort", O.select([["", `App default (${s.effort})`]].concat(s.efforts.map((e) => [e, e[0].toUpperCase() + e.slice(1)])), b.effort, (v) => set({ effort: v }))));
     const budget = h("input", { type: "number", min: "0", max: "1000", step: "0.5", value: b.budget ? String(b.budget) : "", placeholder: `App default ($${s.max_session_cost_usd})` });
     budget.addEventListener("change", () => set({ budget: Number(budget.value || 0) }).then(() => O.toast("Saved", 1000)).catch(O.fail));
-    body.append(O.field("Spending limit ($)", budget, b.cost ? `${O.money(b.cost)} spent since you opened oomi.` : "Nothing spent since you opened oomi."));
+    body.append(O.field("Daily spending limit ($)", budget, b.cost ? `${O.money(b.cost)} spent today.` : "Nothing spent today."));
 
     // sidebar
     body.append(h("div", { class: "section" }, "Sidebar"),
@@ -188,7 +195,7 @@
       h("button", { type: "button", class: "btn", onclick: () => O.cloneBot(id) }, icon("copy", 16), "Duplicate"),
       h("button", { type: "button", class: "btn", onclick: () => O.exportBot(id) }, icon("download", 16), "Export"),
       O.WIN.kind !== "bot" ? h("button", { type: "button", class: "btn", onclick: () => O.popOut(id) }, icon("popout", 16), "Own window") : null,
-      h("button", { type: "button", class: "btn", onclick: () => O.deleteBot(id) }, icon("trash", 16), "Delete")));
+      h("button", { type: "button", class: "btn delete", onclick: () => O.deleteBot(id) }, icon("trash", 16), "Delete")));
   }
 
   // Scheduled runs: the list, a switch and delete on each, and a form to add one. Any "schedule" event refreshes it.
@@ -261,7 +268,38 @@
       } }, appLogo(a, "sm"), h("div", { class: "grow" }, a.name, h("div", { class: "small" }, O.plural(a.tools, "1 tool", "N tools"))), t);
     })));
   }
-  const appLogo = (a, cls = "") => h("span", { class: `app-logo ${cls}`, style: `background:${a.color || "#444"}` }, a.name[0]);
+  // Brand marks for the catalog apps (Simple Icons, CC0). Apps without one show their initial; custom apps a plug.
+  const APP_LOGOS = {
+    notion: "M4.459 4.208c.746.606 1.026.56 2.428.466l13.215-.793c.28 0 .047-.28-.046-.326L17.86 1.968c-.42-.326-.981-.7-2.055-.607L3.01 2.295c-.466.046-.56.28-.374.466zm.793 3.08v13.904c0 .747.373 1.027 1.214.98l14.523-.84c.841-.046.935-.56.935-1.167V6.354c0-.606-.233-.933-.748-.887l-15.177.887c-.56.047-.747.327-.747.933zm14.337.745c.093.42 0 .84-.42.888l-.7.14v10.264c-.608.327-1.168.514-1.635.514-.748 0-.935-.234-1.495-.933l-4.577-7.186v6.952L12.21 19s0 .84-1.168.84l-3.222.186c-.093-.186 0-.653.327-.746l.84-.233V9.854L7.822 9.76c-.094-.42.14-1.026.793-1.073l3.456-.233 4.764 7.279v-6.44l-1.215-.139c-.093-.514.28-.887.747-.933zM1.936 1.035l13.31-.98c1.634-.14 2.055-.047 3.082.7l4.249 2.986c.7.513.934.653.934 1.213v16.378c0 1.026-.373 1.634-1.68 1.726l-15.458.934c-.98.047-1.448-.093-1.962-.747l-3.129-4.06c-.56-.747-.793-1.306-.793-1.96V2.667c0-.839.374-1.54 1.447-1.632z",
+    linear: "M2.886 4.18A11.982 11.982 0 0 1 11.99 0C18.624 0 24 5.376 24 12.009c0 3.64-1.62 6.903-4.18 9.105L2.887 4.18ZM1.817 5.626l16.556 16.556c-.524.33-1.075.62-1.65.866L.951 7.277c.247-.575.537-1.126.866-1.65ZM.322 9.163l14.515 14.515c-.71.172-1.443.282-2.195.322L0 11.358a12 12 0 0 1 .322-2.195Zm-.17 4.862 9.823 9.824a12.02 12.02 0 0 1-9.824-9.824Z",
+    atlassian: "M7.12 11.084a.683.683 0 00-1.16.126L.075 22.974a.703.703 0 00.63 1.018h8.19a.678.678 0 00.63-.39c1.767-3.65.696-9.203-2.406-12.52zM11.434.386a15.515 15.515 0 00-.906 15.317l3.95 7.9a.703.703 0 00.628.388h8.19a.703.703 0 00.63-1.017L12.63.38a.664.664 0 00-1.196.006z",
+    gmail: "M24 5.457v13.909c0 .904-.732 1.636-1.636 1.636h-3.819V11.73L12 16.64l-6.545-4.91v9.273H1.636A1.636 1.636 0 0 1 0 19.366V5.457c0-2.023 2.309-3.178 3.927-1.964L5.455 4.64 12 9.548l6.545-4.91 1.528-1.145C21.69 2.28 24 3.434 24 5.457z",
+    intercom: "M21 0H3C1.343 0 0 1.343 0 3v18c0 1.658 1.343 3 3 3h18c1.658 0 3-1.342 3-3V3c0-1.657-1.342-3-3-3zm-5.801 4.399c0-.44.36-.8.802-.8.44 0 .8.36.8.8v10.688c0 .442-.36.801-.8.801-.443 0-.802-.359-.802-.801V4.399zM11.2 3.994c0-.44.357-.799.8-.799s.8.359.8.799v11.602c0 .44-.357.8-.8.8s-.8-.36-.8-.8V3.994zm-4 .405c0-.44.359-.8.799-.8.443 0 .802.36.802.8v10.688c0 .442-.36.801-.802.801-.44 0-.799-.359-.799-.801V4.399zM3.199 6c0-.442.36-.8.802-.8.44 0 .799.358.799.8v7.195c0 .441-.359.8-.799.8-.443 0-.802-.36-.802-.8V6zM20.52 18.202c-.123.105-3.086 2.593-8.52 2.593-5.433 0-8.397-2.486-8.521-2.593-.335-.288-.375-.792-.086-1.128.285-.334.79-.375 1.125-.09.047.041 2.693 2.211 7.481 2.211 4.848 0 7.456-2.186 7.479-2.207.334-.289.839-.25 1.128.086.289.336.25.84-.086 1.128zm.281-5.007c0 .441-.36.8-.801.8-.441 0-.801-.36-.801-.8V6c0-.442.361-.8.801-.8.441 0 .801.357.801.8v7.195z",
+    github: "M12 .297c-6.63 0-12 5.373-12 12 0 5.303 3.438 9.8 8.205 11.385.6.113.82-.258.82-.577 0-.285-.01-1.04-.015-2.04-3.338.724-4.042-1.61-4.042-1.61C4.422 18.07 3.633 17.7 3.633 17.7c-1.087-.744.084-.729.084-.729 1.205.084 1.838 1.236 1.838 1.236 1.07 1.835 2.809 1.305 3.495.998.108-.776.417-1.305.76-1.605-2.665-.3-5.466-1.332-5.466-5.93 0-1.31.465-2.38 1.235-3.22-.135-.303-.54-1.523.105-3.176 0 0 1.005-.322 3.3 1.23.96-.267 1.98-.399 3-.405 1.02.006 2.04.138 3 .405 2.28-1.552 3.285-1.23 3.285-1.23.645 1.653.24 2.873.12 3.176.765.84 1.23 1.91 1.23 3.22 0 4.61-2.805 5.625-5.475 5.92.42.36.81 1.096.81 2.22 0 1.606-.015 2.896-.015 3.286 0 .315.21.69.825.57C20.565 22.092 24 17.592 24 12.297c0-6.627-5.373-12-12-12",
+    sentry: "M13.91 2.505c-.873-1.448-2.972-1.448-3.844 0L6.904 7.92a15.478 15.478 0 0 1 8.53 12.811h-2.221A13.301 13.301 0 0 0 5.784 9.814l-2.926 5.06a7.65 7.65 0 0 1 4.435 5.848H2.194a.365.365 0 0 1-.298-.534l1.413-2.402a5.16 5.16 0 0 0-1.614-.913L.296 19.275a2.182 2.182 0 0 0 .812 2.999 2.24 2.24 0 0 0 1.086.288h6.983a9.322 9.322 0 0 0-3.845-8.318l1.11-1.922a11.47 11.47 0 0 1 4.95 10.24h5.915a17.242 17.242 0 0 0-7.885-15.28l2.244-3.845a.37.37 0 0 1 .504-.13c.255.14 9.75 16.708 9.928 16.9a.365.365 0 0 1-.327.543h-2.287c.029.612.029 1.223 0 1.831h2.297a2.206 2.206 0 0 0 1.922-3.31z",
+    vercel: "M24 22.525H0l12-21.05 12 21.05z",
+    supabase: "M11.9 1.036c-.015-.986-1.26-1.41-1.874-.637L.764 12.05C-.33 13.427.65 15.455 2.409 15.455h9.579l.113 7.51c.014.985 1.259 1.408 1.873.636l9.262-11.653c1.093-1.375.113-3.403-1.645-3.403h-9.642z",
+    cloudflare: "M16.5088 16.8447c.1475-.5068.0908-.9707-.1553-1.3154-.2246-.3164-.6045-.499-1.0615-.5205l-8.6592-.1123a.1559.1559 0 0 1-.1333-.0713c-.0283-.042-.0351-.0986-.021-.1553.0278-.084.1123-.1484.2036-.1562l8.7359-.1123c1.0351-.0489 2.1601-.8868 2.5537-1.9136l.499-1.3013c.0215-.0561.0293-.1128.0147-.168-.5625-2.5463-2.835-4.4453-5.5499-4.4453-2.5039 0-4.6284 1.6177-5.3876 3.8614-.4927-.3658-1.1187-.5625-1.794-.499-1.2026.119-2.1665 1.083-2.2861 2.2856-.0283.31-.0069.6128.0635.894C1.5683 13.171 0 14.7754 0 16.752c0 .1748.0142.3515.0352.5273.0141.083.0844.1475.1689.1475h15.9814c.0909 0 .1758-.0645.2032-.1553l.12-.4268zm2.7568-5.5634c-.0771 0-.1611 0-.2383.0112-.0566 0-.1054.0415-.127.0976l-.3378 1.1744c-.1475.5068-.0918.9707.1543 1.3164.2256.3164.6055.498 1.0625.5195l1.8437.1133c.0557 0 .1055.0263.1329.0703.0283.043.0351.1074.0214.1562-.0283.084-.1132.1485-.204.1553l-1.921.1123c-1.041.0488-2.1582.8867-2.5527 1.914l-.1406.3585c-.0283.0713.0215.1416.0986.1416h6.5977c.0771 0 .1474-.0489.169-.126.1122-.4082.1757-.837.1757-1.2803 0-2.6025-2.125-4.727-4.7344-4.727",
+    huggingface: "M1.4446 11.5059c0 1.1021.1673 2.1585.4847 3.1563-.0378-.0028-.0691-.0058-.1058-.0058-.4209 0-.8015.16-1.0704.4512-.3454.3737-.4984.8335-.4316 1.293a1.576 1.576 0 0 0 .2148.5978c-.2319.1864-.4018.4456-.4844.7578-.0646.2448-.131.7543.2149 1.2794a1.4552 1.4552 0 0 0-.0625.1055c-.208.3923-.2207.8372-.0371 1.25.2783.6258.9696 1.1175 2.3126 1.6467.8356.3292 1.5988.5411 1.6056.543 1.1046.2847 2.104.4277 2.969.4277 1.4173 0 2.4754-.3849 3.1525-1.1446 1.538.2651 2.791.1403 3.592.006.6773.7555 1.7332 1.1387 3.1467 1.1387.8649 0 1.8643-.143 2.969-.4278.0068-.0019.77-.2138 1.6056-.543 1.343-.5292 2.0343-1.0208 2.3126-1.6466.1836-.4129.171-.8577-.037-1.25a1.4685 1.4685 0 0 0-.0626-.1056c.346-.525.2795-1.0346.2149-1.2793-.0826-.3122-.2525-.5714-.4844-.7579.11-.1816.1831-.3788.2148-.5977.0669-.4595-.0862-.9193-.4316-1.293-.2688-.2913-.6495-.4513-1.0704-.4513-.0209 0-.0376.0008-.0588.0018.3162-.9966.4846-2.0518.4846-3.1523 0-5.807-4.7362-10.5144-10.5789-10.5144-5.8426 0-10.5788 4.7073-10.5788 10.5144Zm10.5788-9.4831c5.2727 0 9.5476 4.246 9.5476 9.483a9.4201 9.4201 0 0 1-.2696 2.2365c-.0039-.0047-.0079-.011-.0117-.0156-.274-.3255-.6679-.5059-1.1075-.5059-.352 0-.714.1155-1.0763.3438-.2403.1517-.5058.422-.7793.7598-.2534-.3492-.608-.5832-1.0137-.6465a1.5174 1.5174 0 0 0-.2344-.0176c-.9263 0-1.4828.7993-1.6935 1.5177-.1046.2426-.6065 1.3482-1.3614 2.0978-1.1681 1.1601-1.4458 2.3534-.8396 3.6382-.843.1029-1.5836.0927-2.365-.006.5906-1.212.3626-2.4388-.8426-3.6322-.755-.7496-1.2568-1.8552-1.3614-2.0978-.2107-.7184-.7673-1.5177-1.6935-1.5177-.078 0-.1568.0054-.2344.0176-.4057.0633-.7604.2973-1.0137.6465-.2735-.3379-.539-.6081-.7794-.7598-.3622-.2283-.7243-.3438-1.0762-.3438-.4266 0-.8094.171-1.0821.4786a9.4208 9.4208 0 0 1-.2598-2.1936c0-5.237 4.2749-9.483 9.5475-9.483zM8.6443 7.0036c-.4838.0043-.9503.2667-1.1934.7227-.3536.6633-.1006 1.4873.5645 1.84.351.1862.4883-.5261.836-.6485.3107-.1095.841.399 1.0078.086.3536-.6634.1025-1.4874-.5625-1.84a1.3659 1.3659 0 0 0-.6524-.1602Zm6.8403 0c-.2199-.002-.4426.05-.6504.1602-.665.3526-.9181 1.1766-.5645 1.84.1669.313.6971-.1955 1.0079-.086.3476.1224.4867.8347.838.6485.6649-.3527.916-1.1767.5624-1.84-.243-.456-.7096-.7184-1.1934-.7227Zm-9.7565 1.418a.8768.8768 0 0 0-.877.877c0 .4846.3925.877.877.877a.8768.8768 0 0 0 .877-.877.8768.8768 0 0 0-.877-.877zm12.6434 0c-.4845 0-.879.3925-.879.877 0 .4846.3945.877.879.877a.8768.8768 0 0 0 .877-.877.8768.8768 0 0 0-.877-.877zM8.7927 11.459c-.179-.003-.2793.1107-.2793.416 0 .8097.3874 2.125 1.4279 2.924.207-.7123 1.3453-1.2832 1.5079-1.2012.2315.1167.2191.4417.6074.7266.3884-.285.374-.6098.6056-.7266.1627-.082 1.3009.4889 1.5079 1.2012 1.0404-.799 1.4278-2.1144 1.4278-2.924 0-1.2212-1.583.6402-3.5413.6485-1.4686-.0061-2.7266-1.0558-3.2639-1.0645zM4.312 14.4768c.5792.365 1.6964 2.2751 2.1056 3.0177.1371.2488.371.3536.582.3536.4188 0 .7465-.4138.0391-.9395-1.0636-.791-.6914-2.0846-.1836-2.1642a.4302.4302 0 0 1 .0664-.004c.4616 0 .666.7892.666.7892s.5959 1.4898 1.6213 2.508c.942.9356 1.062 1.703.4961 2.6661-.0164-.004-.0159.0236-.1484.2149-.1853.2673-.4322.4688-.7188.6152-.5062.2269-1.1397.2696-1.7833.2696-1.037 0-2.1017-.1824-2.6975-.336-.0293-.0075-3.6505-.9567-3.1916-1.8224.0771-.1454.2033-.2031.3633-.2031.6463 0 1.823.9551 2.3283.9551.113 0 .196-.0865.2285-.2031.2249-.8045-3.2787-1.0522-2.9846-2.1642.0519-.1967.193-.2757.3907-.2754.854 0 2.7704 1.4923 3.172 1.4923.0307 0 .0525-.0085.0645-.0274.2012-.3227.1096-.5865-1.3087-1.4395-1.4182-.8533-2.4315-1.329-1.8653-1.9416.0651-.0707.1574-.1015.2695-.1015.8611.0002 2.8948 1.84 2.8948 1.84s.5487.5683.8809.5683c.0762 0 .1416-.0315.1855-.1054.2355-.3946-2.1858-2.2183-2.3224-2.971-.0926-.51.0641-.7676.3555-.7676-.0006.008.1701-.0285.4942.1759zm16.2257.5918c-.1366.7526-2.5579 2.5764-2.3224 2.9709.044.074.1092.1055.1855.1055.3321 0 .881-.5684.881-.5684s2.0336-1.8397 2.8947-1.84c.1121 0 .2044.0308.2695.1016.5662.6125-.447 1.0882-1.8653 1.9415-1.4183.853-1.51 1.1168-1.3087 1.4396.012.0188.0337.0273.0644.0273.4016 0 2.3181-1.4923 3.1721-1.4923.1977-.0002.3388.0787.3907.2754.294 1.112-3.2095 1.3597-2.9846 2.1642.0325.1166.1156.2032.2285.2032.5054 0 1.682-.9552 2.3283-.9552.16 0 .2862.0577.3633.2032.459.8656-3.1623 1.8149-3.1916 1.8224-.5958.1535-1.6605.336-2.6975.336-.6351 0-1.261-.0409-1.7638-.2599-.2949-.1472-.5488-.3516-.7383-.625-.0411-.0682-.1026-.1476-.1426-.205-.5726-.9679-.455-1.7371.4903-2.676 1.0254-1.0182 1.6212-2.508 1.6212-2.508s.2044-.7891.666-.7891a.4318.4318 0 0 1 .0665.0039c.5078.0796.88 1.3732-.1836 2.1642-.7074.5257-.3797.9395.039.9395.211 0 .445-.1047.5821-.3535.4092-.7426 1.5264-2.6527 2.1056-3.0178.5588-.3524.99-.1816.8497.5918z",
+    figma: "M15.852 8.981h-4.588V0h4.588c2.476 0 4.49 2.014 4.49 4.49s-2.014 4.491-4.49 4.491zM12.735 7.51h3.117c1.665 0 3.019-1.355 3.019-3.019s-1.355-3.019-3.019-3.019h-3.117V7.51zm0 1.471H8.148c-2.476 0-4.49-2.014-4.49-4.49S5.672 0 8.148 0h4.588v8.981zm-4.587-7.51c-1.665 0-3.019 1.355-3.019 3.019s1.354 3.02 3.019 3.02h3.117V1.471H8.148zm4.587 15.019H8.148c-2.476 0-4.49-2.014-4.49-4.49s2.014-4.49 4.49-4.49h4.588v8.98zM8.148 8.981c-1.665 0-3.019 1.355-3.019 3.019s1.355 3.019 3.019 3.019h3.117V8.981H8.148zM8.172 24c-2.489 0-4.515-2.014-4.515-4.49s2.014-4.49 4.49-4.49h4.588v4.441c0 2.503-2.047 4.539-4.563 4.539zm-.024-7.51a3.023 3.023 0 0 0-3.019 3.019c0 1.665 1.365 3.019 3.044 3.019 1.705 0 3.093-1.376 3.093-3.068v-2.97H8.148zm7.704 0h-.098c-2.476 0-4.49-2.014-4.49-4.49s2.014-4.49 4.49-4.49h.098c2.476 0 4.49 2.014 4.49 4.49s-2.014 4.49-4.49 4.49zm-.097-7.509c-1.665 0-3.019 1.355-3.019 3.019s1.355 3.019 3.019 3.019h.098c1.665 0 3.019-1.355 3.019-3.019s-1.355-3.019-3.019-3.019h-.098z",
+    canva: "M12 0C5.373 0 0 5.373 0 12s5.373 12 12 12 12-5.373 12-12S18.627 0 12 0zM6.962 7.68c.754 0 1.337.549 1.405 1.2.069.583-.171 1.097-.822 1.406-.343.171-.48.172-.549.069-.034-.069 0-.137.069-.206.617-.514.617-.926.548-1.508-.034-.378-.308-.618-.583-.618-1.2 0-2.914 2.674-2.674 4.629.103.754.549 1.646 1.509 1.646.308 0 .65-.103.96-.24.5-.264.799-.47 1.097-.8-.073-.885.704-2.046 1.851-2.046.515 0 .926.205.96.583.068.514-.377.582-.514.582s-.378-.034-.378-.17c-.034-.138.309-.07.275-.378-.035-.206-.24-.274-.446-.274-.72 0-1.131.994-1.029 1.611.035.275.172.549.447.549.205 0 .514-.31.617-.755.068-.308.343-.514.583-.514.102 0 .17.034.205.171v.138c-.034.137-.137.548-.102.651 0 .069.034.171.17.171.092 0 .436-.18.777-.459.117-.59.253-1.298.253-1.357.034-.24.137-.48.617-.48.103 0 .171.034.205.171v.138l-.136.617c.445-.583 1.097-.994 1.508-.994.172 0 .309.102.309.274 0 .103 0 .274-.069.446-.137.377-.309.96-.412 1.474 0 .137.035.274.207.274.171 0 .685-.206 1.096-.754l.007-.004c-.002-.068-.007-.134-.007-.202 0-.411.035-.754.104-.994.068-.274.411-.514.617-.514.103 0 .205.069.205.171 0 .035 0 .103-.034.137-.137.446-.24.857-.24 1.269 0 .24.034.582.102.788 0 .034.035.069.07.069.068 0 .548-.445.89-1.028-.308-.206-.48-.549-.48-.96 0-.72.446-1.097.858-1.097.343 0 .617.24.617.72 0 .308-.103.65-.274.96h.102a.77.77 0 0 0 .584-.24.293.293 0 0 1 .134-.117c.335-.425.83-.74 1.41-.74.48 0 .924.205.959.582.068.515-.378.618-.515.618l-.002-.002c-.138 0-.377-.035-.377-.172 0-.137.309-.068.274-.376-.034-.206-.24-.275-.446-.275-.686 0-1.13.891-1.028 1.611.034.275.171.583.445.583.206 0 .515-.308.652-.754.068-.274.343-.514.583-.514.103 0 .17.034.205.171 0 .069 0 .206-.137.652-.17.308-.171.48-.137.617.034.274.171.48.309.583.034.034.068.102.068.102 0 .069-.034.138-.137.138-.034 0-.068 0-.103-.035-.514-.205-.72-.548-.789-.891-.205.24-.445.377-.72.377-.445 0-.89-.411-.96-.926a1.609 1.609 0 0 1 .075-.649c-.203.13-.422.203-.623.203h-.17c-.447.652-.927 1.098-1.27 1.303a.896.896 0 0 1-.377.104c-.068 0-.171-.035-.205-.104-.095-.152-.156-.392-.193-.667-.481.527-1.145.805-1.453.805-.343 0-.548-.206-.582-.55v-.376c.102-.754.377-1.2.377-1.337a.074.074 0 0 0-.069-.07c-.24 0-1.028.824-1.166 1.373l-.103.445c-.068.309-.377.515-.582.515-.103 0-.172-.035-.206-.172v-.137l.046-.233c-.435.31-.87.508-1.075.508-.308 0-.48-.172-.514-.412-.206.274-.445.412-.754.412-.352 0-.696-.24-.862-.593-.244.275-.523.553-.852.764-.48.309-1.028.549-1.68.549-.582 0-1.097-.309-1.371-.583-.412-.377-.651-.96-.686-1.509-.205-1.68.823-3.84 2.4-4.8.378-.205.755-.343 1.132-.343zm9.77 3.291c-.104 0-.172.172-.172.343 0 .274.137.583.309.755a1.74 1.74 0 0 0 .102-.583c0-.343-.137-.515-.24-.515z",
+    stripe: "M13.976 9.15c-2.172-.806-3.356-1.426-3.356-2.409 0-.831.683-1.305 1.901-1.305 2.227 0 4.515.858 6.09 1.631l.89-5.494C18.252.975 15.697 0 12.165 0 9.667 0 7.589.654 6.104 1.872 4.56 3.147 3.757 4.992 3.757 7.218c0 4.039 2.467 5.76 6.476 7.219 2.585.92 3.445 1.574 3.445 2.583 0 .98-.84 1.545-2.354 1.545-1.875 0-4.965-.921-6.99-2.109l-.9 5.555C5.175 22.99 8.385 24 11.714 24c2.641 0 4.843-.624 6.328-1.813 1.664-1.305 2.525-3.236 2.525-5.732 0-4.128-2.524-5.851-6.594-7.305h.003z",
+    paypal: "M7.016 19.198h-4.2a.562.562 0 0 1-.555-.65L5.093.584A.692.692 0 0 1 5.776 0h7.222c3.417 0 5.904 2.488 5.846 5.5-.006.25-.027.5-.066.747A6.794 6.794 0 0 1 12.071 12H8.743a.69.69 0 0 0-.682.583l-.325 2.056-.013.083-.692 4.39-.015.087zM19.79 6.142c-.01.087-.01.175-.023.261a7.76 7.76 0 0 1-7.695 6.598H9.007l-.283 1.795-.013.083-.692 4.39-.134.843-.014.088H6.86l-.497 3.15a.562.562 0 0 0 .555.65h3.612c.34 0 .63-.249.683-.585l.952-6.031a.692.692 0 0 1 .683-.584h2.126a6.793 6.793 0 0 0 6.707-5.752c.306-1.95-.466-3.744-1.89-4.906z",
+    posthog: "M9.854 14.5 5 9.647.854 5.5A.5.5 0 0 0 0 5.854V8.44a.5.5 0 0 0 .146.353L5 13.647l.147.146L9.854 18.5l.146.147v-.049c.065.03.134.049.207.049h2.586a.5.5 0 0 0 .353-.854L9.854 14.5zm0-5-4-4a.487.487 0 0 0-.409-.144.515.515 0 0 0-.356.21.493.493 0 0 0-.089.288V8.44a.5.5 0 0 0 .147.353l9 9a.5.5 0 0 0 .853-.354v-2.585a.5.5 0 0 0-.146-.354l-5-5zm1-4a.5.5 0 0 0-.854.354V8.44a.5.5 0 0 0 .147.353l4 4a.5.5 0 0 0 .853-.354V9.854a.5.5 0 0 0-.146-.354l-4-4zm12.647 11.515a3.863 3.863 0 0 1-2.232-1.1l-4.708-4.707a.5.5 0 0 0-.854.354v6.585a.5.5 0 0 0 .5.5H23.5a.5.5 0 0 0 .5-.5v-.6c0-.276-.225-.497-.499-.532zm-5.394.032a.8.8 0 1 1 0-1.6.8.8 0 0 1 0 1.6zM.854 15.5a.5.5 0 0 0-.854.354v2.293a.5.5 0 0 0 .5.5h2.293c.222 0 .39-.135.462-.309a.493.493 0 0 0-.109-.545L.854 15.501zM5 14.647.854 10.5a.5.5 0 0 0-.854.353v2.586a.5.5 0 0 0 .146.353L4.854 18.5l.146.147h2.793a.5.5 0 0 0 .353-.854L5 14.647z",
+  };
+  APP_LOGOS["cloudflare-docs"] = APP_LOGOS.cloudflare;
+  // not a catalog app: shown where oomi talks to your Atlas cluster (Account, Cloud sync)
+  APP_LOGOS.mongodb = "M17.193 9.555c-1.264-5.58-4.252-7.414-4.573-8.115-.28-.394-.53-.954-.735-1.44-.036.495-.055.685-.523 1.184-.723.566-4.438 3.682-4.74 10.02-.282 5.912 4.27 9.435 4.888 9.884l.07.05A73.49 73.49 0 0 1 11.91 24h.481c.114-1.032.284-2.056.51-3.07.417-.296.604-.463.85-.693a11.342 11.342 0 0 0 3.639-8.464c.01-.814-.103-1.662-.197-2.218zm-5.336 8.195s0-8.291.275-8.29c.213 0 .49 10.695.49 10.695-.381-.045-.765-1.76-.765-2.405z";
+  const ATLAS = { id: "mongodb", name: "MongoDB Atlas", color: "#00684A" };
+  const appLogo = (a, cls = "") => {
+    const d = APP_LOGOS[a.id];
+    const glyph = d ? `<svg viewBox="0 0 24 24" fill="currentColor"><path d="${d}"/></svg>`
+      : a.custom ? `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${O.P.plug}</svg>` : null;
+    const rgb = /^#[0-9a-f]{6}$/i.test(a.color || "") ? parseInt(a.color.slice(1), 16) : 0;
+    const light = 0.299 * (rgb >> 16) + 0.587 * ((rgb >> 8) & 255) + 0.114 * (rgb & 255) > 170;
+    return h("span", { class: `app-logo ${cls}${light ? " light" : ""}`, style: `background:${a.color || "#444"}`, title: a.name },
+      glyph ? h("span", { class: "glyph", "aria-hidden": "true", html: glyph }) : a.name[0]);
+  };
 
   // ---------------------------------------------------------------------------------------------- bot actions
   O.setBot = async function setBot(patch, id) {
@@ -282,7 +320,7 @@
   O.deleteBot = function deleteBot(id) {
     const b = bot(id);
     O.confirmBox(`Delete ${b.name}?`, `This removes the bot and its chat history. Its folder (${O.tildify(b.folder)}) and everything in it stays where it is.`, "Delete bot",
-      async () => { await O.api("DELETE", `bots/${id}`); O.botGone(id); }, true);
+      async () => { await O.api("DELETE", `bots/${id}`); O.botGone(id); }, "delete");
   };
   O.cloneBot = async function cloneBot(id) {
     try {
@@ -347,7 +385,7 @@
 
   // ---------------------------------------------------------------------------------------------- settings
   const TABS = [
-    ["account", "Account", "person"], ["general", "General", "gear"], ["apps", "Apps", "apps"], ["antibodies", "Antibodies", "shield"], ["display", "Display", "eye"], ["notifications", "Notifications", "bell"],
+    ["account", "Account", "person"], ["providers", "Providers", "gear"], ["apps", "Apps", "apps"], ["antibodies", "Antibodies", "antibody"], ["display", "Display", "eye"], ["notifications", "Notifications", "bell"],
     ["safety", "Safety and limits", "lock"], ["memory", "General memory", "memory"], ["skills", "General skills", "skills"],
     ["status", "Status", "pulse"], ["shortcuts", "Shortcuts", "keyboard"],
   ];
@@ -356,14 +394,15 @@
     ["account", "profile", "Your profile", "name email about me bio account personal"], ["account", "timezone", "Time zone", "clock local time"],
     ["account", "language", "Reply language", "english spanish french locale"], ["account", "units", "Units", "metric imperial miles kilometers"],
     ["account", "share", "Let bots know this", "privacy profile share"], ["account", "sync", "Cloud sync", "mongodb atlas database backup cloud mirror"],
-    ["general", "key", "Anthropic API key", "token secret keychain"], ["general", "model", "Model", "sonnet opus haiku fable"],
-    ["general", "effort", "Effort", "thinking reasoning"], ["general", "budget", "Spending limit per bot", "cost money dollars budget"],
-    ["general", "trust", "Trust for new bots", "sandbox read-only full project permissions"],
-    ["general", "fallback", "Fallback models", "overloaded busy retry order"], ["general", "small", "Background model", "learning summaries compaction cheap"],
-    ["general", "web", "Web search", "internet browse fetch"], ["general", "learn", "Learn about me", "memory facts preferences"],
-    ["general", "awake", "Keep the Mac awake", "sleep caffeinate power"], ["general", "color", "oomi's color", "ghost dock icon theme blue pink purple green peach"],
+    ["account", "backup", "Back up everything", "mongodb atlas backup restore bots conversations memories another mac"],
+    ["providers", "key", "Anthropic API key", "token secret keychain"], ["providers", "model", "Model", "sonnet opus haiku fable"],
+    ["providers", "effort", "Effort", "thinking reasoning"], ["providers", "budget", "Daily spending limit per bot", "cost money dollars budget day"],
+    ["providers", "others", "Other providers", "add provider gateway proxy base url openrouter litellm bedrock vertex key"],
+    ["providers", "fallback", "Fallback models", "overloaded busy retry order"], ["providers", "small", "Background model", "learning summaries compaction cheap"],
+    ["providers", "web", "Web search", "internet browse fetch"], ["providers", "learn", "Learn about me", "memory facts preferences"],
+    ["providers", "awake", "Keep the Mac awake", "sleep caffeinate power"], ["providers", "color", "oomi's color", "ghost dock icon theme blue pink purple green peach"],
     ["antibodies", "", "Antibodies", "team fixes errors mongodb atlas shared proven cures vector search rerank"],
-    ["apps", "", "Connected apps", "connectors mcp notion github linear jira sentry vercel supabase stripe integrations"], ["general", "file", "Export, import or reset settings", "backup restore defaults file"],
+    ["apps", "", "Connected apps", "connectors mcp notion github linear jira sentry vercel supabase stripe integrations"], ["providers", "file", "Export, import or reset settings", "backup restore defaults file"],
     ["display", "mode", "Simple or Advanced", "panes split layout tabs windows workspace"], ["display", "steps", "Tool steps", "activity commands detailed hidden"],
     ["display", "thinking", "Show what it's thinking", "reasoning typing"], ["display", "text", "Text size", "font bigger smaller zoom"],
     ["display", "density", "Density", "compact spacing"], ["display", "width", "Conversation width", "narrow wide full"],
@@ -384,7 +423,7 @@
     if (sheetEl) { sheetEl.remove(); sheetEl = null; }
     S.sheet = null;
   };
-  O.openSettings = async function openSettings(tab = "general", highlight = "") {
+  O.openSettings = async function openSettings(tab = "providers", highlight = "") {
     const same = sheetEl && S.sheet === tab;
     const prev = sheetEl && $(".sheet-body", sheetEl);
     const keepScroll = same && prev && !highlight ? prev.scrollTop : 0;
@@ -400,7 +439,7 @@
     $(".sheet-main", sheetEl).replaceChildren(
       h("div", { class: "sheet-head" }, h("h3", {}, TABS.find((t) => t[0] === tab)[1]),
         h("button", { type: "button", class: "icon-btn", title: "Close (Esc)", onclick: O.closeSettings }, icon("x", 18))), body);
-    const draw = { account: drawAccount, general: drawGeneral, apps: drawApps, antibodies: drawAntibodies, display: drawDisplay, notifications: drawNotifications, safety: drawSafety, memory: drawMemory, skills: drawSkills, status: drawStatus, shortcuts: drawShortcuts }[tab];
+    const draw = { account: drawAccount, providers: drawProviders, apps: drawApps, antibodies: drawAntibodies, display: drawDisplay, notifications: drawNotifications, safety: drawSafety, memory: drawMemory, skills: drawSkills, status: drawStatus, shortcuts: drawShortcuts }[tab];
     try { await draw(body); }
     catch (e) { body.append(h("div", { class: "err" }, e.message)); }
     if (keepScroll) body.scrollTop = keepScroll;
@@ -447,21 +486,30 @@
     return O.field(label, input, help, key);
   };
 
-  async function drawGeneral(body) {
+  async function drawProviders(body) {
     const s = S.settings = await GET("settings");
     if (!body.isConnected) return;
     body.append(O.field("Anthropic API key", h("div", { class: "row-inline" }, h("div", { class: "grow mono-line" }, s.has_key ? s.key_hint || "Saved" : "Not set"),
       h("button", { type: "button", class: "btn", onclick: keyBox }, s.has_key ? "Replace" : "Add key")),
     s.key_from_env ? "Read from ANTHROPIC_API_KEY in your environment." : "Kept in your Mac's Keychain.", "key"));
+    const others = h("div", { class: "list" }, s.providers.map((p) => h("div", { class: "li" },
+      h("div", { class: "grow" }, p.name, h("div", { class: "small mono-line" }, p.has_key ? p.base_url : `${p.base_url} · key missing`)),
+      h("div", { class: "mini" }, h("button", { type: "button", onclick: () => {
+        const using = S.bots.filter((b) => b.provider === p.id).map((b) => b.name);
+        O.confirmBox(`Remove ${p.name}?`, `Its key is deleted from your Keychain.${using.length ? ` ${using.join(", ")} will use Anthropic again.` : ""}`, "Remove",
+          async () => { S.settings = await O.api("DELETE", `providers/${p.id}`); O.refreshSettings("providers"); }, true);
+      } }, "Remove")))));
+    body.append(O.field("Other providers", h("div", {}, s.providers.length ? others : null,
+      h("button", { type: "button", class: "btn", style: s.providers.length ? "margin-top:8px" : "", onclick: providerBox }, icon("plus", 16), "Add provider")),
+    "Gateways and proxies that speak Anthropic's Messages API, or a second Anthropic account. With more than one provider, each bot's settings choose which it uses.", "others"));
     body.append(O.field("oomi's color", O.colorPicker(s.ghost_color, async (c) => { await save({ ghost_color: c }); O.applyGhostColor(); }),
       "For the Dock and for bots without a color of their own. Each bot's color is in its settings.", "color"));
-    body.append(O.field("Model", O.select(s.models.map((m) => [m, O.modelName(m)]), s.model, (v) => save({ model: v }).then(() => O.refreshSettings("general"))),
+    body.append(O.field("Model", O.select(s.models.map((m) => [m, O.modelName(m)]), s.model, (v) => save({ model: v }).then(() => O.refreshSettings("providers"))),
       "Sonnet is quick and capable. Opus is stronger and costs more.", "model"));
     body.append(O.field("Effort", O.select(s.efforts.map((e) => [e, e[0].toUpperCase() + e.slice(1)]), s.effort, (v) => save({ effort: v })), "Higher effort thinks longer on hard problems.", "effort"));
     const budget = h("input", { type: "number", min: "0.5", max: "1000", step: "0.5", value: String(s.max_session_cost_usd) });
     budget.addEventListener("change", async () => { try { await save({ max_session_cost_usd: Number(budget.value) }); O.toast("Saved", 1000); } catch (e) { O.fail(e); } });
-    body.append(O.field("Spending limit per bot ($)", budget, "Each bot stops and asks when it has spent this much since you opened oomi.", "budget"));
-    body.append(O.field("Trust for new bots", O.select(s.trust_levels.map((t) => [t, O.TRUST[t].label + ": " + O.TRUST[t].desc]), s.trust, (v) => save({ trust: v })), "", "trust"));
+    body.append(O.field("Daily spending limit per bot ($)", budget, "Each bot stops and asks when it has spent this much today. The limit starts over at midnight.", "budget"));
 
     // fallback models, in the order they're tried
     const fb = h("div", { class: "list" });
@@ -487,7 +535,7 @@
       h("button", { type: "button", class: "btn", onclick: async () => { try { O.downloadJson("oomi-settings.json", await GET("settings/export")); } catch (e) { O.fail(e); } } }, icon("download", 16), "Export"),
       h("button", { type: "button", class: "btn", onclick: importSettings }, icon("upload", 16), "Import"),
       h("button", { type: "button", class: "btn quiet", onclick: () => O.confirmBox("Reset settings?", "Models, limits, safety lists, notifications and display go back to how oomi comes. Your bots, memory, skills and API key stay.", "Reset",
-        async () => { S.settings = await POST("settings/reset"); O.remoteUi(await GET("ui")); O.ws.render(); O.ws.refreshThreads(); O.toast("Settings reset"); O.refreshSettings("general"); }, true) }, "Reset to defaults")),
+        async () => { S.settings = await POST("settings/reset"); O.remoteUi(await GET("ui")); O.ws.render(); O.ws.refreshThreads(); O.toast("Settings reset"); O.refreshSettings("providers"); }, true) }, "Reset to defaults")),
     h("p", { class: "small-note" }, "The file has your choices, not your API key, bots or memory."));
   }
   async function importSettings() {
@@ -501,15 +549,14 @@
     if (dropped("deny_commands").length) looser.push(`Takes ${O.plural(dropped("deny_commands").length, "1 command", "N commands")} off your block list: ${dropped("deny_commands").slice(0, 4).join(", ")}`);
     if (dropped("protected_write_names").length) looser.push(`Stops protecting ${dropped("protected_write_names").slice(0, 5).join(", ")}`);
     if (cur.redact_secrets && c.redact_secrets === false) looser.push("Stops hiding secrets from the model");
-    if (c.trust === "full" && cur.trust !== "full") looser.push("Makes new bots start with Full trust (no sandbox)");
     if (cur.read_project_files === false && c.read_project_files === true) looser.push("Starts reading CLAUDE.md and AGENTS.md in bot folders");
-    if (Number(c.max_session_cost_usd) > Number(cur.max_session_cost_usd)) looser.push(`Raises the spending limit per bot to $${Number(c.max_session_cost_usd)}`);
+    if (Number(c.max_session_cost_usd) > Number(cur.max_session_cost_usd)) looser.push(`Raises the daily spending limit per bot to $${Number(c.max_session_cost_usd)}`);
     const go = async () => {
       S.settings = await POST("settings/import", { data });
       O.remoteUi(await GET("ui"));
       O.ws.render(); O.ws.refreshThreads();
       O.toast("Settings imported");
-      O.refreshSettings("general");
+      O.refreshSettings("providers");
     };
     if (!looser.length) return O.confirmBox("Import these settings?", "Your models, limits, safety lists, notifications and display choices are replaced by the file's.", "Import", go);
     O.modal((box, close) => {
@@ -527,9 +574,27 @@
       box.append(h("h3", {}, "Anthropic API key"), h("p", { class: "lead" }, "Create one at platform.claude.com, under API keys. It's checked, then kept in your Keychain."),
         h("form", { onsubmit: async (e) => {
           e.preventDefault(); ok.disabled = true; err.classList.add("hidden");
-          try { const r = await POST("key", { key: input.value }); S.settings = r.settings; close(); O.toast(r.message, 3000); O.refreshSettings("general"); }
+          try { const r = await POST("key", { key: input.value }); S.settings = r.settings; close(); O.toast(r.message, 3000); O.refreshSettings("providers"); }
           catch (ex) { err.textContent = ex.message; err.classList.remove("hidden"); ok.disabled = false; }
         } }, input, err, h("div", { class: "foot" }, h("button", { type: "button", class: "btn quiet", onclick: close }, "Cancel"), ok)));
+    });
+  }
+  function providerBox() {
+    O.modal((box, close) => {
+      const name = h("input", { class: "text-input", placeholder: "Name, like Work gateway", maxlength: "40", spellcheck: "false" });
+      const url = h("input", { class: "text-input", placeholder: "https://gateway.example.com", spellcheck: "false", autocomplete: "off" });
+      const key = h("input", { class: "text-input", type: "password", placeholder: "API key", autocomplete: "off", spellcheck: "false" });
+      const err = h("div", { class: "err hidden" });
+      const ok = h("button", { type: "submit", class: "btn primary" }, "Add provider");
+      box.append(h("h3", {}, "Add a provider"), h("p", { class: "lead" }, "Any service that speaks Anthropic's Messages API. Its address is the one you'd give the Anthropic SDK as base_url. The key is kept in your Keychain."),
+        h("form", { onsubmit: async (e) => {
+          e.preventDefault(); ok.disabled = true; err.classList.add("hidden");
+          try { S.settings = await POST("providers", { name: name.value, base_url: url.value, key: key.value }); close(); O.toast(`${name.value.trim()} added. Choose it in a bot's settings.`, 3000); O.refreshSettings("providers"); }
+          catch (ex) { err.textContent = ex.message; err.classList.remove("hidden"); ok.disabled = false; }
+        } }, h("div", { class: "field" }, h("label", {}, "Name"), name), h("div", { class: "field" }, h("label", {}, "Address"), url),
+        h("div", { class: "field" }, h("label", {}, "API key"), key), err,
+        h("div", { class: "foot" }, h("button", { type: "button", class: "btn quiet", onclick: close }, "Cancel"), ok)));
+      setTimeout(() => name.focus(), 30);
     });
   }
 
@@ -646,25 +711,54 @@
       try { await POST(path, payload); O.toast(ok, 1600); O.refreshSettings("account"); } catch (e) { O.fail(e); btn.disabled = false; }
     };
     if (s.provider) {
-      const up = h("button", { type: "button", class: "btn", onclick: () => run(up, "account/sync/push", {}, "Uploaded") }, icon("upload", 15), "Upload now");
-      const down = h("button", { type: "button", class: "btn", onclick: () => O.confirmBox("Replace your profile here?", "The profile in the database replaces the one on this Mac.", "Download", () => run(down, "account/sync/pull", {}, "Downloaded")) }, icon("download", 15), "Download");
-      sync.append(
+      const d = a.data;
+      const size = (n) => (n >= 1e6 ? `${(n / 1e6).toFixed(1)} MB` : `${Math.max(1, Math.round(n / 1e3))} KB`);
+      // Uploading replaces the backup; if another Mac made it, say so first
+      const upload = async () => {
+        if (d.enabled) {
+          let r = null;
+          try { r = (await GET("account/data/remote")).remote; } catch (e) { return O.fail(e); }
+          if (r && !r.this_mac) return O.confirmBox(`Replace the backup from ${r.host}?`, `The backup in the database was made on ${r.host}, ${when(r.updated)}. Uploading replaces it with this Mac's bots, conversations and memories.`, "Upload", () => run(up, "account/sync/push", {}, "Uploaded"), true);
+        }
+        run(up, "account/sync/push", {}, "Uploaded");
+      };
+      const restore = async () => {
+        let r = null;
+        try { r = (await GET("account/data/remote")).remote; } catch (e) { return O.fail(e); }
+        if (!r) return O.toast("There's no backup in the database for this account yet.", 3000);
+        O.confirmBox(`Restore the backup from ${r.host}?`, `Your bots, conversations, memories, skills and settings here are replaced by the backup from ${r.host}, ${when(r.updated)} (${r.files} files, ${size(r.bytes)}). What's replaced is kept in ~/.oomi/backups. It finishes when you quit and reopen oomi.`, "Download",
+          async () => { await POST("account/data/restore"); O.toast("Downloaded. Quit and reopen oomi to finish.", 4000); O.refreshSettings("account"); }, true);
+      };
+      const up = h("button", { type: "button", class: "btn", onclick: upload }, icon("upload", 15), "Upload now");
+      const down = h("button", { type: "button", class: "btn", onclick: () => O.confirmBox("Replace your profile here?", "The profile in the database replaces the one on this Mac.", "Download", () => run(down, "account/sync/pull", {}, "Downloaded")) }, icon("download", 15), "Download profile");
+      sync.append(...[ // DOM append writes null as text
         h("div", { class: "list" },
-          h("div", { class: "li" }, h("span", { class: "mark-txt" }, s.error ? "!" : "✓"), h("div", { class: "grow" }, `MongoDB Atlas · ${s.database}.${s.collection}`,
-            h("div", { class: "small" }, `Uploaded ${when(s.last_push)} · downloaded ${when(s.last_pull)}`), s.error ? h("div", { class: "small", style: "color:var(--fg)" }, s.error) : null)),
+          h("div", { class: "li" }, appLogo(ATLAS, "sm"), h("div", { class: "grow" }, `MongoDB Atlas · ${s.database}.${s.collection}`,
+            h("div", { class: "small" }, `Uploaded ${when(s.last_push)} · downloaded ${when(s.last_pull)}`), s.error ? h("div", { class: "small", style: "color:var(--fg)" }, s.error) : null),
+            h("span", { class: "mark-txt", title: s.error ? "Last sync failed" : "Connected" }, s.error ? "!" : "✓")),
           h("div", { class: "li" }, h("div", { class: "grow" }, "Account ID", h("div", { class: "small mono-line" }, a.id)),
             h("div", { class: "mini" }, h("button", { type: "button", onclick: () => O.copyText(a.id, "Account ID copied") }, "Copy")))),
-        h("div", { class: "row-inline wrap", style: "margin-top:10px" }, up, down,
+        O.toggleRow("Back up everything else", "Bots and their settings, conversations, memories, skills, schedules, usage and attachments, every 15 minutes and when you quit. API keys and app sign-ins stay in your Keychain.",
+          d.enabled, (v) => POST("account/data/enabled", { on: v }).then(() => O.refreshSettings("account")), "backup"),
+        d.enabled ? h("div", { class: "small-note" }, d.last_push ? `Backed up ${when(d.last_push)} · ${d.files} files, ${size(d.bytes)}` : "Not backed up yet.",
+          d.skipped.length ? ` ${d.skipped.length} ${d.skipped.length === 1 ? "file was" : "files were"} too big to back up (over 64 MB).` : "",
+          d.error ? h("div", { style: "color:var(--fg)" }, d.error) : null) : null,
+        d.other && !d.pending_restore ? h("p", { class: "small-note", style: "color:var(--fg)" }, `The backup in the database is from ${d.other.host} (${when(d.other.updated)}), so automatic backups from this Mac are paused. Restore it here, or upload this Mac's to replace it.`) : null,
+        d.pending_restore ? h("div", { class: "row-inline" }, h("p", { class: "small-note grow", style: "color:var(--fg);margin:0" }, "A backup is downloaded. Quit and reopen oomi to finish restoring it."),
+          h("button", { type: "button", class: "btn quiet", onclick: () => POST("account/data/cancel_restore").then(() => O.refreshSettings("account"), O.fail) }, "Cancel restore")) : null,
+        h("div", { class: "row-inline wrap", style: "margin-top:10px" }, up,
+          h("button", { type: "button", class: "btn", onclick: restore }, icon("download", 15), "Restore everything…"), down,
           h("button", { type: "button", class: "btn quiet", onclick: () => O.promptBox("Use another Mac's account", "Paste the account ID from the other Mac's Account settings. Its profile replaces the one here.", "", "Use it",
             (v) => POST("account/sync/pull", { account_id: v.trim() }).then(() => { O.toast("Switched account", 1600); O.refreshSettings("account"); }), { placeholder: "acct_…", max: 40 }) }, "Use another account…"),
-          h("button", { type: "button", class: "btn quiet", onclick: () => O.confirmBox("Stop syncing?", "Your profile stays on this Mac and in the database; the connection string is removed from your Keychain.", "Stop syncing", () => POST("account/sync/disconnect").then(() => O.refreshSettings("account"))) }, "Disconnect")));
+          h("button", { type: "button", class: "btn quiet", onclick: () => O.confirmBox("Stop syncing?", "Your profile and backup stay on this Mac and in the database; the connection string is removed from your Keychain.", "Stop syncing", () => POST("account/sync/disconnect").then(() => O.refreshSettings("account"))) }, "Disconnect"))].filter(Boolean));
     } else {
       const uri = h("input", { class: "text-input", type: "password", placeholder: "mongodb+srv://user:password@cluster0.example.mongodb.net/", autocomplete: "off", spellcheck: "false" });
       const db = h("input", { class: "text-input", value: s.database || "oomi", spellcheck: "false", "aria-label": "Database" });
       const coll = h("input", { class: "text-input", value: s.collection || "accounts", spellcheck: "false", "aria-label": "Collection" });
       const err = h("div", { class: "err hidden" });
       const go = h("button", { type: "submit", class: "btn primary" }, "Connect");
-      sync.append(h("p", { class: "small-note" }, "Keep a copy of your profile in your own MongoDB Atlas database, to use it on another Mac. Only the profile is synced: API keys, app sign-ins and conversations stay on this Mac."),
+      sync.append(h("div", { class: "row-inline", style: "margin-bottom:10px" }, appLogo(ATLAS),
+        h("p", { class: "small-note grow", style: "margin:0" }, "Keep a copy of your profile, bots, conversations and memories in your own MongoDB Atlas database, to back them up or move to another Mac. API keys and app sign-ins stay in your Keychain.")),
         h("form", { class: "stack", autocomplete: "off", onsubmit: async (e) => {
           e.preventDefault(); go.disabled = true; err.classList.add("hidden");
           try { await POST("account/sync/connect", { uri: uri.value, database: db.value.trim(), collection: coll.value.trim() }); O.toast("Connected to MongoDB Atlas", 1800); O.refreshSettings("account"); }
@@ -678,68 +772,148 @@
 
   // Antibodies: errors your team's bots have fixed, with the fix that was proven to work, shared through MongoDB Atlas
   async function drawAntibodies(body) {
-    const a = await GET("antibodies");
+    // Atlas can take a few seconds to answer (up to 8 when it's unreachable)
+    const loading = h("div", { class: "list" }, h("div", { class: "li" }, appLogo(ATLAS, "sm"),
+      h("div", { class: "grow" }, "Loading antibodies…", h("div", { class: "small" }, "Asking MongoDB Atlas for your team's fixes.")), h("span", { class: "spin" })));
+    body.append(loading);
+    let a;
+    try { a = await GET("antibodies"); } finally { loading.remove(); }
     if (!body.isConnected) return;
-    body.append(h("p", { class: "small-note", style: "margin:0 0 12px" }, "When a bot fixes an error and the failing check then passes, it writes the fix down. Once you approve it, every oomi on your team gets that fix first when it hits the same error, even worded differently in another project."));
     const again = () => O.refreshSettings("antibodies");
+    const mins = (s) => (s >= 3600 ? `${(s / 3600).toFixed(1)} h` : s >= 60 ? `${Math.round(s / 60)} min` : `${Math.round(s)} s`);
+
+    // the connection, always first; the driver's own error (often a page long) is under Details
     if (!a.connected) {
       const retry = h("button", { type: "button", class: "btn", onclick: async () => { retry.disabled = true; try { await POST("antibodies/connect"); } catch (e) { O.fail(e); } again(); } }, "Try again");
-      body.append(h("div", { class: "list" }, h("div", { class: "li" }, h("span", { class: "mark-txt" }, a.error ? "!" : "·"),
+      const why = !a.error ? "Connect your cluster in Account (Cloud sync), or set MONGODB_URI. Your team shares one database; OOMI_TEAM names the team."
+        : /timed? ?out|ServerSelection/i.test(a.error) ? "The cluster didn't answer. Check your internet connection, and that this network's IP address is allowed in Atlas, Network Access."
+        : /auth/i.test(a.error) ? "Atlas turned down the username or password in the connection string."
+        : O.clip(a.error, 160);
+      body.append(h("div", { class: "list" }, h("div", { class: "li" }, appLogo(ATLAS, "sm"),
         h("div", { class: "grow" }, a.error ? "Couldn't reach MongoDB Atlas" : "Not connected to MongoDB Atlas",
-          h("div", { class: "small" }, a.error || "Connect your cluster in Account (Cloud sync), or set MONGODB_URI. Your team shares one database; OOMI_TEAM names the team.")))),
-        h("div", { class: "row-inline", style: "margin-top:10px" }, h("button", { type: "button", class: "btn primary", onclick: () => O.openSettings("account", "sync") }, "Connect in Account"), retry));
+          h("div", { class: "small" }, why),
+          a.error ? h("details", { class: "err-details" }, h("summary", {}, "Details"), h("pre", {}, a.error)) : null),
+        h("span", { class: "mark-txt" }, a.error ? "!" : "·"))),
+        h("div", { class: "row-inline", style: "margin-top:10px" }, h("button", { type: "button", class: "btn primary", onclick: () => O.openSettings("account", "sync") }, "Connect in Account"), retry),
+        howItWorks());
       return;
     }
-    const mins = (s) => (s >= 3600 ? `${(s / 3600).toFixed(1)} h` : s >= 60 ? `${Math.round(s / 60)} min` : `${Math.round(s)} s`);
-    const card = (v, k, t) => h("div", { class: "stat" }, h("div", { class: "v" }, v), h("div", { class: "k" }, k), t ? h("div", { class: "t" }, t) : null);
-    body.append(h("div", { class: "stat-grid four" },
-      card(String(a.stats.antibodies), a.stats.antibodies === 1 ? "Proven fix" : "Proven fixes", `team ${a.team}`),
-      card(String(a.stats.cures), a.stats.cures === 1 ? "Cure" : "Cures", "errors fixed with them"),
-      card(mins(a.stats.saved_seconds || 0), "Time saved"), card(O.money(a.stats.saved_usd || 0), "Money saved")));
-    const setup = h("button", { type: "button", class: "btn", onclick: async () => {
+    const setup = h("button", { type: "button", onclick: async () => {
       setup.disabled = true; setup.textContent = "Setting up…";
       try { const r = await POST("antibodies/setup", { wait: 20 }); O.toast((r.report || []).join("\n") || "Done", 6000); } catch (e) { O.fail(e); }
       again();
     } }, "Set up search indexes");
-    body.append(h("div", { class: "list", style: "margin-top:12px" }, h("div", { class: "li" }, h("span", { class: "mark-txt" }, a.search_error ? "!" : "✓"),
-      h("div", { class: "grow" }, a.mode === "local" ? "Matching on this Mac" : `Matching with ${a.mode}`, h("div", { class: "small" }, a.search_error
-        ? `Stepped down because: ${a.search_error}`
-        : a.mode === "local" ? "Atlas Search is off (OOMI_ATLAS_SEARCH=0), so errors are compared word by word."
-        : "Hybrid search ($rankFusion of vector and text), reranked by Voyage inside Atlas, when the cluster supports it.")),
-      h("div", { class: "mini" }, setup))));
+    const searchLine = a.search_error ? `Search stepped down to ${a.mode}: ${a.search_error}`
+      : a.mode === "local" ? "Matching on this Mac, word by word (OOMI_ATLAS_SEARCH=0)" : `Matching with ${a.mode} search`;
+    body.append(h("div", { class: "list" }, h("div", { class: "li" }, appLogo(ATLAS, "sm"),
+      h("div", { class: "grow" }, `MongoDB Atlas · team ${a.team}`, h("div", { class: "small" }, `Sharing as ${a.user}`),
+        h("div", { class: "small", style: a.search_error ? "color:var(--fg)" : "", title: "Hybrid search ($rankFusion of vector and text), reranked by Voyage inside Atlas, when the cluster supports it." }, searchLine)),
+      h("div", { class: "mini" }, setup), h("span", { class: "mark-txt" }, a.search_error ? "!" : "✓"))));
 
-    const doc = (d, actions) => h("div", { class: "routine antibody" }, h("div", { class: "grow" },
-      h("div", { class: "rt mono-line", title: d.error_text }, d.error_text),
-      h("div", { class: "rs" }, d.fix || "(no description)"),
+    const empty = !a.approved.length && !a.pending.length;
+    if (empty) body.append(howItWorks());
+    else {
+      const card = (v, k, t) => h("div", { class: "stat" }, h("div", { class: "v" }, v), h("div", { class: "k" }, k), t ? h("div", { class: "t" }, t) : null);
+      body.append(h("div", { class: "stat-grid four", style: "margin-top:12px" },
+        card(String(a.stats.antibodies), a.stats.antibodies === 1 ? "Proven fix" : "Proven fixes", `team ${a.team}`),
+        card(String(a.stats.cures), a.stats.cures === 1 ? "Cure" : "Cures", "errors fixed with them"),
+        card(mins(a.stats.saved_seconds || 0), "Time saved"), card(O.money(a.stats.saved_usd || 0), "Money saved")));
+    }
+
+    // Each antibody is a card titled by its error's type ("ModuleNotFoundError"), or its first line when it has none
+    const titleOf = (d) => {
+      const lines = (d.error_text || "").split("\n").map((l) => l.trim().replace(/^E\s{2,}/, "")).filter(Boolean); // pytest marks error lines "E   "
+      const m = (lines[0] || "").match(/^(?:\w+\.)*([A-Z]\w*(?:Error|Exception|Timeout|Warning|Exit|Interrupt|Failure)\w*):?\s*([\s\S]*)$/);
+      if (m) return { name: m[1], detail: [m[2], ...lines.slice(1)].filter(Boolean).join("\n") };
+      return { name: O.clip(lines[0] || "An error", 90), detail: lines.slice(1).join("\n") };
+    };
+    const doc = (d, actions) => { const t = titleOf(d); return h("div", { class: "routine antibody" }, h("div", { class: "grow" },
+      h("div", { class: "ab-title", title: d.error_text }, t.name),
+      t.detail ? h("div", { class: "ab-error", title: "Show all", onclick: (e) => e.currentTarget.classList.toggle("open") }, h("div", { class: "ab-clamp" }, t.detail)) : null,
+      h("div", { class: "rs" }, h("span", { class: "ab-k" }, "Fix "), d.fix || "(no description)"),
       h("div", { class: "rs dim" }, [d.author ? `by ${d.author}` : "", d.project ? `in ${d.project}` : "",
         d.proven_by && d.proven_by.command ? `proved by \`${d.proven_by.command}\`` : "",
-        d.uses ? `cured ${d.cures || 0} of ${d.uses}` : "", d.seconds_to_fix ? `took ${mins(d.seconds_to_fix)}` : ""].filter(Boolean).join(" · "))), actions);
+        d.uses ? `cured ${d.cures || 0} of ${d.uses}` : "", d.seconds_to_fix ? `took ${mins(d.seconds_to_fix)}` : ""].filter(Boolean).join(" · "))), actions); };
     const review = (id, approve) => POST(`antibodies/${id}/review`, { approve }).then(() => { O.toast(approve ? "Shared with your team" : "Discarded", 1500); again(); }).catch(O.fail);
+    const remove = (d) => O.confirmBox("Delete this fix?", "It's removed from MongoDB Atlas, so nobody's bots are offered it any more. This can't be undone.", "Delete",
+      () => O.api("DELETE", `antibodies/${d.id}`).then(() => { O.toast("Fix deleted", 1500); again(); }), true);
     if (a.pending.length) {
-      body.append(h("div", { class: "section" }, `Waiting for you (${a.pending.length})`), h("div", { class: "routines" }, a.pending.map((d) =>
-        doc(d, h("div", { class: "row-inline", style: "flex:none" },
-          h("button", { type: "button", class: "btn quiet", onclick: () => review(d.id, false) }, "Discard"),
-          h("button", { type: "button", class: "btn primary", onclick: () => review(d.id, true) }, "Share"))))));
+      body.append(h("div", { class: "section" }, `Waiting for you (${a.pending.length})`),
+        h("p", { class: "small-note" }, "Fixes your bots proved. Your team only gets the ones you share."),
+        h("div", { class: "routines" }, a.pending.map((d) =>
+          doc(d, h("div", { class: "row-inline", style: "flex:none" },
+            h("button", { type: "button", class: "btn quiet", onclick: () => review(d.id, false) }, "Discard"),
+            h("button", { type: "button", class: "btn primary", onclick: () => review(d.id, true) }, "Share"))))));
     }
-    body.append(h("div", { class: "section" }, `Your team's fixes (${a.approved.length})`), a.approved.length
-      ? h("div", { class: "routines" }, a.approved.map((d) => doc(d, null)))
-      : h("p", { class: "small-note" }, "None yet. They appear here when a bot fixes an error and you share the fix."));
+    if (!empty) {
+      const list = h("div", { class: "routines" });
+      const paint = (q = "") => {
+        const w = q.trim().toLowerCase();
+        const items = a.approved.filter((d) => !w || `${d.error_text} ${d.fix} ${d.author} ${d.project}`.toLowerCase().includes(w));
+        list.replaceChildren(...(items.length ? items.map((d) => doc(d, h("button", { type: "button", class: "btn quiet", style: "flex:none", onclick: () => remove(d) }, "Delete")))
+          : [h("p", { class: "empty-note" }, a.approved.length ? "No fix matches that." : "None shared yet. Share the ones waiting above.")]));
+      };
+      paint();
+      body.append(h("div", { class: "section" }, `Your team's fixes (${a.approved.length})`), ...[a.approved.length > 5
+        ? h("input", { type: "search", class: "text-input", placeholder: "Filter by error, fix, person or project", style: "margin-bottom:8px", oninput: (e) => paint(e.target.value) })
+        : null, list].filter(Boolean));
+    }
 
-    // try a match: what would a bot be offered for this error?
+    // a fix you already know works, typed in by hand
+    const fType = h("input", { class: "text-input", placeholder: "AttributeError", maxlength: "80", spellcheck: "false" });
+    const fMsg = h("textarea", { class: "instr", rows: "3", placeholder: "module 'collections' has no attribute 'Mapping'", maxlength: "4000", spellcheck: "false" });
+    const fFix = h("textarea", { class: "instr", rows: "3", placeholder: "Import Mapping from collections.abc instead of collections; it moved there in Python 3.10.", maxlength: "500" });
+    const fCmd = h("input", { class: "text-input", placeholder: "pytest -q", maxlength: "300", spellcheck: "false" });
+    const fProj = h("input", { class: "text-input", placeholder: "invoices", maxlength: "80" });
+    for (const t of [fMsg, fFix]) t.style.width = "100%";
+    const addErr = h("div", { class: "err hidden" });
+    const addBtn = h("button", { type: "submit", class: "btn primary" }, "Save fix");
+    body.append(h("div", { class: "section" }, "Add a fix by hand"),
+      h("p", { class: "small-note" }, "For an error you've already fixed yourself. It's shared with your team straight away."),
+      h("form", { class: "stack", autocomplete: "off", onsubmit: async (e) => {
+        e.preventDefault(); addBtn.disabled = true; addBtn.textContent = "Saving…"; addErr.classList.add("hidden");
+        try {
+          await POST("antibodies/add", { error_type: fType.value, error_message: fMsg.value, fix: fFix.value, command: fCmd.value, project: fProj.value });
+          O.toast("Fix saved and shared with your team", 2000); again();
+        } catch (ex) { addErr.textContent = ex.message; addErr.classList.remove("hidden"); addBtn.disabled = false; addBtn.textContent = "Save fix"; }
+      } },
+        O.field("Error type", fType, "Optional, like AttributeError or ModuleNotFoundError."),
+        O.field("Error message", fMsg),
+        O.field("Fix", fFix, "What change made the error go away, in a sentence or two."),
+        h("div", { class: "row-inline" }, h("div", { class: "grow" }, O.field("Command that proves it", fCmd, "Optional. It passes once the fix is in.")),
+          h("div", { class: "grow" }, O.field("Project", fProj, "Optional."))),
+        addErr, h("div", { class: "row-inline", style: "justify-content:flex-end" }, addBtn)));
+
+    // what would a bot be offered for this error?
     const err = h("textarea", { class: "instr", rows: "3", placeholder: "Paste an error, like: AttributeError: module 'collections' has no attribute 'Mapping'" });
     const out = h("div");
     const test = h("button", { type: "button", class: "btn", onclick: async () => {
-      test.disabled = true;
+      test.disabled = true; test.textContent = "Searching…";
       try {
         const r = await POST("antibodies/match", { error: err.value });
         out.replaceChildren(h("div", { class: "list", style: "margin-top:8px" }, r.match
           ? h("div", { class: "li" }, h("span", { class: "mark-txt" }, "✓"), h("div", { class: "grow" }, r.match.fix, h("div", { class: "small" }, `${r.match.how}, score ${r.match.score} · by ${r.match.author}`)))
           : h("div", { class: "li" }, h("span", { class: "mark-txt" }, "·"), h("div", { class: "grow" }, "Nothing sure enough to offer", h("div", { class: "small" }, `${r.how} search found ${r.candidates.length} candidates`)))));
       } catch (e) { O.fail(e); }
-      test.disabled = false;
+      test.disabled = false; test.textContent = "Find a match";
     } }, "Find a match");
     err.style.width = "100%";
-    body.append(h("div", { class: "section" }, "Try it"), err, h("div", { class: "row-inline", style: "margin-top:8px;justify-content:flex-end" }, test), out);
+    body.append(h("div", { class: "section" }, "Try a match"), h("p", { class: "small-note" }, "What a bot would be offered if it hit this error."),
+      err, h("div", { class: "row-inline", style: "margin-top:8px;justify-content:flex-end" }, test), out);
+
+    function howItWorks() {
+      const prompt = "Create broken.py containing these two lines:\nimport collections\nprint(collections.Mapping)\nRun `python3 broken.py`, fix broken.py, then run `python3 broken.py` again to prove it passes.";
+      const step = (n, t, d) => h("div", { class: "li" }, h("span", { class: "n-badge" }, String(n)), h("div", { class: "grow" }, t, h("div", { class: "small" }, d)));
+      return h("div", {}, h("div", { class: "section" }, "How it works"),
+        h("div", { class: "list" },
+          step(1, "A bot fixes an error", "A command fails, the bot changes something, and the same command then passes."),
+          step(2, "You share the fix", "It waits here until you click Share. Then it's stored in your team's shared brain on MongoDB Atlas, the one place every teammate's oomi learns from."),
+          step(3, "Your team gets it first", "Any teammate's bot that hits a matching error, even worded differently, finds your fix in the shared brain and tries it first.")),
+        h("div", { class: "section" }, "Make your first one",
+          h("button", { type: "button", class: "btn quiet", style: "height:26px", onclick: () => O.copyText(prompt, "Prompt copied") }, icon("copy", 14), "Copy")),
+        h("p", { class: "small-note" }, "Send this to any bot. When it's done, the fix shows up here under Waiting for you."),
+        h("pre", { class: "prompt-box" }, prompt));
+    }
   }
 
   // Apps: hosted MCP servers. Connected ones first, then the catalog by category, with search and filter chips.
@@ -876,8 +1050,13 @@
         h("button", { type: "button", class: "btn primary", onclick: save }, "Save"))));
       ta.focus();
     };
-    // Who holds a memory (Settings only): "Every bot" for the shared ones, otherwise the bot's name.
-    const ownerTag = (f) => botId ? null : h("span", { class: `tag owner${f.owner ? "" : " shared"}`, title: f.owner ? `Only ${f.owner_name} sees this` : "Every bot sees this" }, f.owner ? f.owner_name : "Every bot");
+    // Who holds a memory (Settings only): "Every bot" for the shared ones, otherwise the bot: its ghost, name and id.
+    const ownerLabel = (id, name) => {
+      if (!id) return [icon("layers", 12), "Every bot"];
+      const b = O.bot(id);
+      return [b ? O.avatar(0, "tag-av", b.color) : null, name, h("span", { class: "tag-id" }, O.shortId(id))];
+    };
+    const ownerTag = (f) => botId ? null : h("span", { class: `tag owner${f.owner ? "" : " shared"}`, title: f.owner ? `Only ${f.owner_name} (${f.owner}) sees this` : "Every bot sees this" }, ...ownerLabel(f.owner, f.owner_name));
     const factRow = (f, review) => {
       const row = h("div", { class: "li" });
       row.append(
@@ -911,9 +1090,10 @@
     if (owners.length) {
       const chip = (id, label) => {
         const n = (id === "" ? data.facts : data.facts.filter((f) => (id === "shared" ? !f.owner : f.owner === id))).length;
-        return h("button", { type: "button", class: `chip${view === id ? " solid" : ""}`, onclick: () => { S.memOwner = id; again(); } }, `${label} ${n}`);
+        return h("button", { type: "button", class: `chip${view === id ? " solid" : ""}`, onclick: () => { S.memOwner = id; again(); } }, ...label, h("span", {}, String(n)));
       };
-      body.append(h("div", { class: "apps-chips", style: "margin-bottom:10px" }, chip("", "All"), chip("shared", "Every bot"), ...owners.map(([id, name]) => chip(id, name))));
+      body.append(h("div", { class: "apps-chips", style: "margin-bottom:10px" }, chip("", ["All"]), chip("shared", ownerLabel("", "")),
+        ...owners.map(([id, name]) => chip(id, ownerLabel(id, name)))));
     }
     if (unreviewed.length) {
       body.append(h("div", { class: "section" }, `New, to review (${unreviewed.length})`,
@@ -1024,7 +1204,7 @@
     const rows = u.bots.map((b) => {
       const now = live[b.id];
       const sub = [b.last ? `last used ${O.sideTime(b.last).toLowerCase()}` : "not used yet",
-        now && now.cost ? `${O.money(now.cost)} since you opened oomi` : "", now && now.context_tokens ? `${O.tok(now.context_tokens)} tokens of context now` : ""].filter(Boolean).join(", ");
+        now && now.cost ? `${O.money(now.cost)} today` : "", now && now.context_tokens ? `${O.tok(now.context_tokens)} tokens of context now` : ""].filter(Boolean).join(", ");
       return row(h("div", { class: "who" }, avatar(b.avatar, "", b.color), h("div", {}, h("div", { class: "nm" }, b.name), h("div", { class: "sub" }, sub))), b);
     });
     if (u.other.all.calls) rows.push(row(h("div", { class: "who" }, h("span", { class: "avatar term" }, icon("terminal", 14)), h("div", {}, h("div", { class: "nm" }, "Terminal and other"), h("div", { class: "sub" }, "The oomi command and deleted bots"))), u.other));
@@ -1039,7 +1219,7 @@
     }
     body.append(h("p", { class: "note-small" }, "Tokens in include cached input, which costs a tenth of fresh input. Costs use Anthropic's published prices."));
     const mark = (ok) => h("span", { class: "mark-txt" }, ok === true ? "✓" : ok === false ? "✕" : "!");
-    const keyText = { ok: "API key accepted", rejected: "API key rejected. Replace it in General.", missing: "No API key yet", unused: "API key not used yet" }[s.key.status] || s.key.status;
+    const keyText = { ok: "API key accepted", rejected: "API key rejected. Replace it in Providers.", missing: "No API key yet", unused: "API key not used yet" }[s.key.status] || s.key.status;
     body.append(h("div", { class: "section" }, "Health"), h("div", { class: "list health" },
       h("div", { class: "li" }, mark(s.key.status === "ok" ? true : s.key.status === "rejected" ? false : null), h("div", { class: "grow" }, keyText, s.key.when ? h("div", { class: "small" }, O.sepTime(s.key.when)) : null)),
       h("div", { class: "li" }, mark(true), h("div", { class: "grow" }, `${O.modelName(s.model)} for conversations`, h("div", { class: "small" }, s.fallback.length ? `Falls back to ${s.fallback.map(O.modelName).join(", ")}; background work on ${O.modelName(s.background)}` : `No fallback; background work on ${O.modelName(s.background)}`))),
@@ -1136,7 +1316,7 @@
             h("button", { type: "button", class: "btn", onclick: (e) => answer("no", e.currentTarget) }, confirm ? "No" : "Don't allow"),
             h("button", { type: "button", class: "btn quiet", onclick: () => { O.closeOverview(); O.ws.openBot(b.id); } }, "Open"))) : null,
         h("div", { class: "over-foot" },
-          b.cost ? h("span", { class: "small-note" }, `${O.money(b.cost)} since opening`) : h("span"),
+          b.cost ? h("span", { class: "small-note" }, `${O.money(b.cost)} today`) : h("span"),
           h("div", { class: "row-inline" },
             b.status !== "idle" ? h("button", { type: "button", class: "btn quiet sm", onclick: () => POST(`bots/${b.id}/stop`).catch(O.fail) }, icon("stop", 14), "Stop") : null,
             O.WIN.kind !== "bot" ? h("button", { type: "button", class: "btn quiet sm", title: "Own window", onclick: () => O.popOut(b.id) }, icon("popout", 14)) : null,
@@ -1239,7 +1419,7 @@
     const name = h("input", { class: "text-input", value: opts.name || "", placeholder: "Name, like Website or Taxes", maxlength: "40" });
     let folder = "";
     let specific = false; // off: it gets its own new folder in ~/Oomi
-    let trust = S.settings.trust || "project";
+    let trust = "project";
     const folderLine = h("div", { class: "grow mono-line" });
     const pathIn = h("input", { class: "text-input", placeholder: "Folder path, like ~/code/my-app" });
     const err = h("div", { class: "err hidden" });
