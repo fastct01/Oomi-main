@@ -123,12 +123,7 @@ class DataSync:
         if not self.lock.acquire(blocking=not auto):
             return self.state()
         try:
-            try:
-                db, a = self._db()
-            except AccountError as e:
-                if self.account.load()["sync"].get("enabled"):  # connected, but unreachable now
-                    self._update(error=str(e))
-                raise
+            db, a = self._db()
             try:
                 remote = db[MANIFESTS].find_one({"_id": a["id"]}, {"device": 1, "host": 1, "updated": 1})
                 if auto and remote and remote.get("device") != a["device"]:

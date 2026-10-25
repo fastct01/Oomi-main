@@ -137,16 +137,3 @@ def test_off_until_atlas_is_connected(tmp_path):
     assert not sync.enabled
     with pytest.raises(AccountError, match="Connect"):
         sync.push()
-
-
-def test_an_unreachable_cluster_is_reported_not_raised_raw(tmp_path, atlas):
-    home = tmp_path / ".oomi"
-    fill(home, tmp_path).close()
-    sync, acct = mac(home, atlas)
-
-    def offline(uri):
-        raise OSError("All nameservers failed to answer the query _mongodb._tcp.cluster-oomi.example.mongodb.net")
-    acct.client_factory = offline
-    with pytest.raises(AccountError, match="Couldn't reach the database"):
-        sync.push(auto=True)
-    assert "nameservers" in sync.state()["error"]

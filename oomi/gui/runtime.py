@@ -441,22 +441,22 @@ class BotRuntime:
                                 notify=lambda msg: self.ui.notice(msg, "info"))
 
     def _save_antibody_candidates(self, agent: Agent) -> None:
-        """Fixes found this turn wait for you; nothing is shared before you click Share on the notice in the chat."""
+        """Fixes found this turn wait for your approval in Settings, Antibodies; nothing is shared before that."""
         w = agent.watcher
         if w is None or not w.candidates:
             return
-        saved = []
+        saved = 0
         while w.candidates:
             cand = w.candidates.pop(0)
             try:
-                saved.append(str(w.store.save(cand, approved=False)))
+                w.store.save(cand, approved=False)
+                saved += 1
             except Exception as e:  # noqa: BLE001
                 self.ui.notice(f"Couldn't save the antibody: {e}", "warn")
         if saved:
-            self.emit("antibodies", pending=len(saved))
-            self.put({"id": new_id("n-"), "type": "notice", "level": "info", "ts": time.time(), "action": "antibody",
-                      "antibodies": saved, "text": f"{'A fix is' if len(saved) == 1 else f'{len(saved)} fixes are'} "
-                      "ready to share with your team."})
+            self.emit("antibodies", pending=saved)
+            self.ui.notice(f"{'A fix is' if saved == 1 else f'{saved} fixes are'} ready to share with your team: "
+                           "review in Settings, Antibodies.", "info")
 
     def _turn(self, fn) -> None:
         """Run one request (and any messages sent while it worked) with the window kept up to date."""
