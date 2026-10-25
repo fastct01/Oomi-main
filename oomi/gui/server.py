@@ -1766,6 +1766,18 @@ class Handler(BaseHTTPRequestHandler):
                 raise ApiError(409, "Wait until it finishes, or stop it first.")
             b = self._body()
             self._json(rt.submit("undo", bool(b.get("all")), bool(b.get("confirm"))).result(120))
+        elif key == ("POST", "share"):
+            # The Share button on a chat notice: the fixes that turn proved go to the team
+            item = rt.timeline.get(str(self._body().get("item") or ""))
+            if item is None or item.get("action") != "antibody":
+                raise ApiError(404, "No such fix.")
+            if app.team is None:
+                raise ApiError(400, "Connect MongoDB Atlas first (Settings, Account).")
+            shared = sum(1 for i in item.get("antibodies") or [] if app.team.review(i, approve=True))
+            item = dict(item, closed=True, shared=shared)
+            rt.put(item)
+            app.bus.emit({"type": "antibodies"})
+            self._json({"item": item, "shared": shared})
         elif key == ("POST", "react"):
             b = self._body()
             item = rt.timeline.get(str(b.get("item") or ""))

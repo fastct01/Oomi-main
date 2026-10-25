@@ -99,17 +99,17 @@ class MongoMirror:
     def database_handle(self):
         """The database itself: the backup of everything else (cloud.py) keeps its own collections next to this one."""
         if self._db is None:
-            if self.client_factory is not None:
-                client = self.client_factory(self.uri)
-            else:
+            factory = self.client_factory
+            if factory is None:
                 try:
                     from pymongo import MongoClient
                 except ImportError:
                     raise AccountError("Cloud sync needs pymongo. Install it with: pip install 'oomi[cloud]'")
-                try:
-                    client = MongoClient(self.uri, serverSelectionTimeoutMS=8000, appname="oomi")
-                except Exception as e:  # noqa: BLE001  (e.g. offline: the mongodb+srv:// DNS lookup fails right here)
-                    raise AccountError(f"Couldn't reach the database: {str(e)[:200]}")
+                factory = lambda uri: MongoClient(uri, serverSelectionTimeoutMS=8000, appname="oomi")  # noqa: E731
+            try:
+                client = factory(self.uri)
+            except Exception as e:  # noqa: BLE001  (e.g. offline: the mongodb+srv:// DNS lookup fails right here)
+                raise AccountError(f"Couldn't reach the database: {str(e)[:200]}")
             self._db = client[self.database]
         return self._db
 

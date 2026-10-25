@@ -186,6 +186,28 @@ def test_the_app_saves_fixes_for_review_and_shares_them(server, db, tmp_path):
     assert server.call("POST", "antibodies/match", {"error": ""})[0] == 400
 
 
+def test_a_proven_fix_is_shared_from_the_chat_and_deleted_in_settings(server, db, tmp_path):
+    server.app.connect_team(db=db)
+    server.app.team.use_atlas_search = False  # mongomock has no Atlas Search
+    _, bot = server.call("POST", "bots", {"name": "Shop", "trust": "full"})
+    (Path(bot["folder"]) / "check.py").write_text(CHECK)
+    server.llm.script += fix_script()
+    server.call("POST", f"bots/{bot['id']}/send", {"text": "make check.py pass"})
+    server.wait_idle(bot["id"])
+    _, tl = server.call("GET", f"bots/{bot['id']}/timeline")
+    note = next(i for i in tl["items"] if i.get("action") == "antibody")
+    assert len(note["antibodies"]) == 1 and not note.get("closed")
+    code, r = server.call("POST", f"bots/{bot['id']}/share", {"item": note["id"]})
+    assert code == 200 and r["shared"] == 1 and r["item"]["closed"]
+    _, st = server.call("GET", "antibodies")
+    assert st["pending"] == [] and st["approved"][0]["id"] == note["antibodies"][0]
+    _, r = server.call("POST", f"bots/{bot['id']}/share", {"item": note["id"]})  # clicked twice: nothing more to share
+    assert r["shared"] == 0
+    assert server.call("POST", f"bots/{bot['id']}/share", {"item": "n-nope"})[0] == 404
+    code, st = server.call("DELETE", f"antibodies/{note['antibodies'][0]}")
+    assert code == 200 and st["approved"] == []
+
+
 def test_a_fix_added_by_hand_is_shared_matched_and_can_be_deleted(server, db):
     server.app.connect_team(db=db)
     server.app.team.use_atlas_search = False  # mongomock has no Atlas Search
