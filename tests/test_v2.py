@@ -2,6 +2,7 @@
 snapshots, self-improving skills, health, lean prompt, plan mode, steering."""
 
 import json
+import sys
 import time
 
 import pytest
@@ -378,4 +379,5 @@ def test_first_run_key_prompt_validates_and_stores(env, monkeypatch):
     assert keychain.get_key() is None
     assert keychain.store_key_interactive() is True
     assert keychain.get_key() == "sk-ant-api03-abcdefghijklmnopqrstuvwxyz"
-    assert oct((env.home / "credentials.json").stat().st_mode & 0o777) == "0o600"
+    if sys.platform != "win32":  # Windows has no Unix permission bits (the user folder is private instead)
+        assert oct((env.home / "credentials.json").stat().st_mode & 0o777) == "0o600"

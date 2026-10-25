@@ -230,6 +230,7 @@ def test_the_window_connects_apps_and_bots_can_leave_them_out(tmp_path, fake, mo
     monkeypatch.setattr("oomi.keychain.delete_secret", lambda k: vault.pop(k, None))
     monkeypatch.setenv("OOMI_HOME", str(tmp_path / "home"))
     monkeypatch.setenv("HOME", str(tmp_path / "user"))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path / "user"))  # what Path.home() reads on Windows
     (tmp_path / "user").mkdir()
     server = srv.Server(srv.App(home=tmp_path / "home", llm_factory=lambda key: None)).start()
     server.app.no_browser = True

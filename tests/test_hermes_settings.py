@@ -207,6 +207,7 @@ def gui(tmp_path, monkeypatch):
     user.mkdir()
     monkeypatch.setenv("OOMI_HOME", str(home))
     monkeypatch.setenv("HOME", str(user))
+    monkeypatch.setenv("USERPROFILE", str(user))  # what Path.home() reads on Windows
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-api03-test-0000000000000000000000")
     llm = FakeLLM([])
     app = App(home=home, llm_factory=lambda key: llm, key_checker=lambda k: (True, "ok"), tick_seconds=0, connect_team=False)

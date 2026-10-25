@@ -3,7 +3,7 @@
 # The result is dist/Oomi/ (Oomi.exe and its files); .github/workflows/windows.yml zips it for download.
 import os
 
-from PyInstaller.utils.hooks import collect_submodules
+from PyInstaller.utils.hooks import collect_data_files, collect_submodules
 
 HERE = SPECPATH  # noqa: F821  (set by PyInstaller)
 ROOT = os.path.dirname(os.path.dirname(HERE))
@@ -14,6 +14,10 @@ datas = []
 for folder, dirs, files in os.walk(os.path.join(ROOT, "oomi")):
     dirs[:] = [d for d in dirs if d != "__pycache__"]
     datas += [(os.path.join(folder, f), os.path.relpath(folder, ROOT)) for f in files if not f.endswith((".py", ".pyc"))]
+try:  # Windows has no time zone database of its own: Python reads it from the tzdata package
+    datas += collect_data_files("tzdata")
+except Exception:  # not installed (a trial build on a Mac)
+    pass
 
 a = Analysis(  # noqa: F821
     [os.path.join(HERE, "oomi_app.py")],

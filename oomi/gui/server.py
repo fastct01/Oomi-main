@@ -14,6 +14,7 @@ import os
 import re
 import secrets
 import shutil
+import socket
 import subprocess
 import sys
 import threading
@@ -1812,10 +1813,21 @@ class Handler(BaseHTTPRequestHandler):
             raise ApiError(404, "Not found.")
 
 
+class _HTTPServer(ThreadingHTTPServer):
+    if sys.platform == "win32":
+        # Windows lets a second program bind a port that's in use when SO_REUSEADDR is set (as HTTPServer does),
+        # so two oomis would share 47821. Ask for the port exclusively; a taken port then fails and we move on.
+        allow_reuse_address = False
+
+        def server_bind(self):
+            self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+            super().server_bind()
+
+
 class Server:
     def __init__(self, app: App, port: int = 0):
         handler = type("BoundHandler", (Handler,), {"app": app})
-        self.httpd = ThreadingHTTPServer(("127.0.0.1", port), handler)
+        self.httpd = _HTTPServer(("127.0.0.1", port), handler)
         self.httpd.daemon_threads = True
         self.app = app
         self.port = self.httpd.server_address[1]

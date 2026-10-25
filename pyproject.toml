@@ -13,6 +13,7 @@ dependencies = [
     "anthropic>=1.17,<2",
     "pymongo>=4.10",
     "rich>=13",
+    "tzdata; sys_platform == 'win32'",  # time zones: Windows has no zoneinfo database
 ]
 
 [project.optional-dependencies]

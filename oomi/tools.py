@@ -361,7 +361,8 @@ def run_command(command: str, ctx: ToolContext, timeout: int, allow_network: boo
             _kill_group(proc, _SIGKILL)
         out, _ = proc.communicate(timeout=timeout)
         rc = proc.returncode
-        if ctx.cancel is not None and ctx.cancel.is_set() and rc is not None and rc < 0:
+        # killed by a signal (negative) on a Mac; on Windows taskkill leaves an ordinary non-zero exit code
+        if ctx.cancel is not None and ctx.cancel.is_set() and rc is not None and rc != 0:
             out = (out or b"") + b"\n[oomi] Stopped by the user."
     except subprocess.TimeoutExpired:
         _kill_group(proc, _SIGKILL)

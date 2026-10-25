@@ -171,6 +171,7 @@ def server(tmp_path, monkeypatch):
     user.mkdir()
     monkeypatch.setenv("OOMI_HOME", str(home))
     monkeypatch.setenv("HOME", str(user))
+    monkeypatch.setenv("USERPROFILE", str(user))  # what Path.home() reads on Windows
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-api03-test-0000000000000000000000")
     llm = FakeLLM([])
     app = App(home=home, llm_factory=lambda key: llm, key_checker=lambda k: (True, "Key accepted."), connect_team=False)
@@ -207,7 +208,11 @@ def server(tmp_path, monkeypatch):
             if rt.status == "idle" and rt.jobs.empty():
                 return
             time.sleep(0.02)
-        raise AssertionError(f"bot still {rt.status}")
+        a = rt.agent  # say what it was doing, so a failure on another machine (Windows CI) explains itself
+        alive = [p.pid for p in (a.ctx.procs if a else ()) if p.poll() is None]
+        last = [str(i.get("text") or i.get("summary") or i.get("type"))[:60] for i in rt.timeline.items(4)]
+        raise AssertionError(f"bot still {rt.status}; jobs queued: {rt.jobs.qsize()}; commands alive: {alive}; "
+                             f"interrupted: {getattr(a, 'interrupted', None)}; last items: {last}")
 
     s.call, s.wait_idle = call, wait_idle
     yield s

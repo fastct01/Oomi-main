@@ -1,7 +1,11 @@
+import sys
+
 import pytest
 
 from oomi import sandbox
 from oomi.safety import DANGER, EXEC, assess_shell, decide
+
+MAC_ONLY = pytest.mark.skipif(sys.platform == "win32", reason="the macOS sandbox profile (Seatbelt) only exists on a Mac")
 
 PROTECTED = ["~/.ssh", "~/Library/Keychains"]
 
@@ -61,6 +65,7 @@ def test_protected_mentions_ask():
     assert decide(a, "project", False, True, set())[0] == "ask"
 
 
+@MAC_ONLY
 def test_sandbox_profile_shape(tmp_path):
     prof = sandbox.build_profile(tmp_path, ["~/.cache"], ["~/.ssh"], allow_network=False)
     assert prof.startswith("(version 1)\n(allow default)\n(deny file-write*)")
@@ -73,6 +78,7 @@ def test_sandbox_profile_shape(tmp_path):
     assert "network" not in sandbox.build_profile(tmp_path, [], [], allow_network=True)
 
 
+@MAC_ONLY
 def test_sandbox_quotes_paths(tmp_path):
     weird = tmp_path / 'a "b" \\c'
     weird.mkdir()
@@ -89,6 +95,7 @@ def test_probe_off_mac():
         assert not info["available"]
 
 
+@MAC_ONLY
 def test_sandbox_profile_selection_under_taint(env, monkeypatch):
     """Simulate macOS: capture the Seatbelt profile each command would run under."""
     from oomi import sandbox as sb

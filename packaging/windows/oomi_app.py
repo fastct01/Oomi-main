@@ -17,8 +17,16 @@ def check() -> int:
 
     static = Path(server.__file__).parent / "static"
     missing = [n for n in ("index.html", "app.js", "chat.js", "panels.js", "app.css") if not (static / n).exists()]
-    print(f"oomi {oomi.__version__} utf8={sys.flags.utf8_mode} static={'ok' if not missing else 'missing ' + ', '.join(missing)}")
-    return 0 if sys.flags.utf8_mode and not missing else 1
+    try:  # Settings, Account checks time zones against this
+        from zoneinfo import ZoneInfo
+
+        ZoneInfo("Europe/London")
+        tz = "ok"
+    except Exception as e:  # noqa: BLE001
+        tz = f"missing ({type(e).__name__})"
+    print(f"oomi {oomi.__version__} utf8={sys.flags.utf8_mode} "
+          f"static={'ok' if not missing else 'missing ' + ', '.join(missing)} timezones={tz}")
+    return 0 if sys.flags.utf8_mode and not missing and tz == "ok" else 1
 
 
 def main() -> None:
