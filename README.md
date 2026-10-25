@@ -133,6 +133,21 @@ Run `oomi match "AttributeError: module 'collections' has no attribute 'Iterable
 4. Paste your Anthropic API key ([platform.claude.com](https://platform.claude.com) → API keys). It's checked, then stored in your Keychain.
 5. Make your first bot: give it a name, choose the folder it works in (or let it have its own folder in `~/Oomi`), and pick how much it may do.
 
+### On Windows
+
+1. Download **Oomi-&lt;version&gt;-windows.zip** from the repo's [Releases](https://github.com/fastct01/Oomi-main/releases) page. Each push to `main` also builds one, under **Actions → Windows app → Artifacts** (you need to be signed in to GitHub to download those).
+2. Right-click the zip → **Extract All…**, and open the **Oomi** folder.
+3. Double-click **Oomi.exe**. It has its own Python built in, so there's nothing else to install. Windows SmartScreen may say it protected your PC, because the app isn't signed: click **More info → Run anyway**. That's a one-time step.
+4. A small window shows the address, and oomi opens in your web browser. Keep that window open while you use oomi; closing it (or Ctrl-C) quits.
+5. Paste your Anthropic API key, then make your first bot. There's no folder picker in the browser: type the folder's path, like `C:\Users\you\code\my-app`.
+
+What's different from the Mac:
+
+- **Commands run without an OS sandbox.** The macOS sandbox has no Windows equivalent here, so trust levels can't fence commands into the folder. Risky commands still ask first, and Undo, Changes and the block list work the same.
+- **Install [Git for Windows](https://git-scm.com/download/win)** so bots run commands in Git Bash. Without it they use PowerShell, and the model is told so.
+- **Keys** are kept in `%USERPROFILE%\.oomi\credentials.json`, inside your Windows user folder (which other standard accounts can't open), instead of a Keychain.
+- **Snapshots** before risky commands are plain copies instead of instant APFS clones, so very large projects skip them.
+
 ## Using the app
 
 - **Bots** are listed on the left with their latest message. A pulsing dot means it's working; **!** means it's waiting for your OK. **+** makes a new bot. Right-click a bot to pin it, put it in a section, duplicate, export or delete it; the **⋯** menu groups the list by section, status or folder and sorts it by recency, name, spending or your own order (drag to arrange). ⌘B hides the sidebar.

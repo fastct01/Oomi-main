@@ -1,0 +1,100 @@
+# Builds Oomi for Windows (Oomi.exe in a zip), checks that it starts and serves the app, and attaches the zip to a
+# GitHub Release when a version tag (v0.1.0, ...) is pushed. Every push to main also keeps the zip as a build artifact.
+name: Windows app
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write  # attach the zip to the release
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install oomi and PyInstaller
+        run: |
+          python -m pip install --upgrade pip
+          pip install . pyinstaller pillow
+
+      - name: Version
+        id: version
+        shell: pwsh
+        run: |
+          $v = python -c "import tomllib; print(tomllib.load(open('pyproject.toml', 'rb'))['project']['version'])"
+          "version=$v" >> $env:GITHUB_OUTPUT
+
+      - name: Icon
+        run: python -c "from PIL import Image; Image.open('oomi/assets/oomi-icon-256.png').save('packaging/windows/oomi.ico', sizes=[(16, 16), (24, 24), (32, 32), (48, 48), (64, 64), (128, 128), (256, 256)])"
+
+      - name: Build Oomi.exe
+        run: pyinstaller packaging/windows/oomi.spec --noconfirm --distpath dist --workpath build
+
+      - name: Check the app runs
+        shell: pwsh
+        run: |
+          $env:OOMI_HOME = "$env:RUNNER_TEMP\oomi-home"
+          $check = & .\dist\Oomi\Oomi.exe --check
+          Write-Output $check
+          if ($LASTEXITCODE -ne 0) { throw "Oomi.exe --check failed" }
+
+          # Start it like a double-click would (on a fixed port), then talk to it the way the window does
+          $log = "$env:RUNNER_TEMP\gui.log"
+          $p = Start-Process -FilePath .\dist\Oomi\Oomi.exe -ArgumentList "gui", "--browser", "--port", "47999" `
+                 -PassThru -RedirectStandardOutput $log -RedirectStandardError "$env:RUNNER_TEMP\gui.err"
+          $state = $null
+          for ($i = 0; $i -lt 90 -and -not $state; $i++) {
+            Start-Sleep 1
+            $m = Select-String -Path $log -Pattern "t=(\S+)" -ErrorAction SilentlyContinue
+            if ($m) {
+              $token = $m.Matches[0].Groups[1].Value
+              try {
+                $page = Invoke-WebRequest "http://127.0.0.1:47999/?t=$token" -UseBasicParsing -TimeoutSec 10
+                $state = Invoke-RestMethod "http://127.0.0.1:47999/api/state" -Headers @{ "X-Oomi-Token" = $token } -TimeoutSec 10
+              } catch { }
+            }
+          }
+          Get-Content $log, "$env:RUNNER_TEMP\gui.err" -ErrorAction SilentlyContinue
+          Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
+          if (-not $state) { throw "Oomi.exe started but didn't serve the app" }
+          if ($page.Content -notmatch "oomi") { throw "the page didn't look like oomi" }
+          Write-Output "Served the app: oomi $($state.version), $($state.bots.Count) bots"
+
+      - name: Zip
+        shell: pwsh
+        run: Compress-Archive -Path dist\Oomi -DestinationPath "Oomi-${{ steps.version.outputs.version }}-windows.zip"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Oomi-${{ steps.version.outputs.version }}-windows
+          path: Oomi-${{ steps.version.outputs.version }}-windows.zip
+
+      - name: Attach to the release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: Oomi-${{ steps.version.outputs.version }}-windows.zip
+
+  # The test suite on Windows. Some tests assume a Mac or bash, so this reports without blocking the build.
+  tests:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: |
+          python -m pip install --upgrade pip
+          pip install ".[dev]"
+      - run: python -X utf8 -m pytest -q -p no:cacheprovider

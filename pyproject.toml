@@ -29,7 +29,7 @@ oomi = "oomi.cli:main"
 include = ["oomi*"]
 
 [tool.setuptools.package-data]
-oomi = ["assets/*", "gui/static/*", "certified_skills/*/SKILL.md"]
+oomi = ["assets/*", "assets/*/*", "gui/static/*", "certified_skills/*/SKILL.md"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

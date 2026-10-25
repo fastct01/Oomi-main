@@ -107,7 +107,33 @@ def shell_argv(command: str) -> list:
     # PATH comes from the environment Oomi was started in, so Homebrew tools are still found.
     if sys.platform == "darwin" and os.path.exists("/bin/zsh"):
         return ["/bin/zsh", "-c", command]
+    if sys.platform == "win32":
+        bash = windows_bash()
+        if bash:
+            return [bash, "-c", command]
+        return ["powershell.exe", "-NoLogo", "-NoProfile", "-NonInteractive", "-Command", command]
     return [shutil.which("bash") or "/bin/sh", "-c", command]
+
+
+def windows_bash() -> str | None:
+    """Git Bash, if it's installed: the model writes bash-style commands. Not C:\\Windows\\System32\\bash.exe,
+    which is WSL and runs commands in a separate Linux system instead of this folder's Windows tools."""
+    found = shutil.which("bash")
+    if found and "system32" not in found.lower():
+        return found
+    for base in (os.environ.get("ProgramFiles"), os.environ.get("ProgramW6432"), os.environ.get("LOCALAPPDATA")):
+        for rel in (("Git", "bin", "bash.exe"), ("Programs", "Git", "bin", "bash.exe")):
+            p = os.path.join(base, *rel) if base else ""
+            if p and os.path.exists(p):
+                return p
+    return None
+
+
+def shell_name() -> str:
+    """What runs shell commands here, for the system prompt."""
+    if sys.platform == "win32":
+        return "Git Bash" if windows_bash() else "Windows PowerShell (use PowerShell syntax, not bash)"
+    return "zsh" if sys.platform == "darwin" and os.path.exists("/bin/zsh") else "bash"
 
 
 def wrap(command: str, profile: str | None) -> list:

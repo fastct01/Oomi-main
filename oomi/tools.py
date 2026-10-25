@@ -7,6 +7,7 @@ import re
 import shutil
 import signal
 import subprocess
+import sys
 import threading
 import time
 from dataclasses import dataclass, field
@@ -18,6 +19,10 @@ from .changes import IGNORED_DIRS
 from .safety import (DANGER, EXEC, HIDDEN, READ, WRITE, Assessment, assess_shell, blocked_by, is_protected,
                      is_within, protected_in_command, protected_write, resolve_path, scan_text_for_risks)
 
+_SIGKILL = getattr(signal, "SIGKILL", signal.SIGTERM)  # Windows has no SIGKILL (_kill_group ends the tree there)
+# A command runs in a group of its own so stopping it also stops what it started
+_NEW_GROUP = ({"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP} if sys.platform == "win32"
+              else {"start_new_session": True})
 
 
 @dataclass
@@ -55,7 +60,7 @@ class ToolContext:
         for proc in list(self.procs):
             _kill_group(proc, signal.SIGTERM)
         if self.procs:
-            threading.Timer(2.0, lambda: [_kill_group(p, signal.SIGKILL) for p in list(self.procs)]).start()
+            threading.Timer(2.0, lambda: [_kill_group(p, _SIGKILL) for p in list(self.procs)]).start()
 
     @property
     def sandboxed(self) -> bool:
@@ -349,17 +354,17 @@ def run_command(command: str, ctx: ToolContext, timeout: int, allow_network: boo
     for secret in ("ANTHROPIC_API_KEY", "VOYAGE_API_KEY"):
         env.pop(secret, None)
     proc = subprocess.Popen(argv, cwd=str(cwd or ctx.workspace), stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                            stdin=subprocess.DEVNULL, env=env, start_new_session=True)
+                            stdin=subprocess.DEVNULL, env=env, **_NEW_GROUP)
     ctx.procs.add(proc)
     try:
         if ctx.cancel is not None and ctx.cancel.is_set():
-            _kill_group(proc, signal.SIGKILL)
+            _kill_group(proc, _SIGKILL)
         out, _ = proc.communicate(timeout=timeout)
         rc = proc.returncode
         if ctx.cancel is not None and ctx.cancel.is_set() and rc is not None and rc < 0:
             out = (out or b"") + b"\n[oomi] Stopped by the user."
     except subprocess.TimeoutExpired:
-        _kill_group(proc, signal.SIGKILL)
+        _kill_group(proc, _SIGKILL)
         out, _ = proc.communicate()
         out = (out or b"") + f"\n[oomi] Timed out after {timeout}s and was killed.".encode()
         rc = 124
@@ -370,6 +375,14 @@ def run_command(command: str, ctx: ToolContext, timeout: int, allow_network: boo
 
 def _kill_group(proc, sig) -> None:
     if proc.poll() is not None:
+        return
+    if sys.platform == "win32":  # no process groups or SIGKILL: end the command and everything it started
+        r = subprocess.run(["taskkill", "/T", "/F", "/PID", str(proc.pid)], capture_output=True)
+        if r.returncode != 0:
+            try:
+                proc.kill()
+            except OSError:
+                pass
         return
     try:
         os.killpg(proc.pid, sig)

@@ -984,7 +984,16 @@ def setup(cfg: Config, console: Console) -> None:
     doctor(cfg, console)
 
 
+def utf8_on_windows(argv: list) -> None:
+    """Windows Python reads and writes files in the old local code page unless it runs in UTF-8 mode, and oomi's
+    files (memory, chats, settings) are UTF-8. Restart in UTF-8 mode; Oomi.exe is built with it already on."""
+    if sys.platform == "win32" and not sys.flags.utf8_mode and not getattr(sys, "frozen", False):
+        sys.exit(subprocess.call([sys.executable, "-X", "utf8", "-m", "oomi", *argv]))
+
+
 def main(argv=None) -> None:
+    if argv is None:
+        utf8_on_windows(sys.argv[1:])
     argv = list(sys.argv[1:] if argv is None else argv)
     console = Console()
     ensure_dirs()
