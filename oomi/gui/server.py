@@ -1790,8 +1790,8 @@ class Handler(BaseHTTPRequestHandler):
             shared = sum(1 for i in ids if app.team.review(i, approve=True))
             item = dict(item, closed=True, shared=shared, antibodies=ids)
             rt.put(item)
-            if shared and "ready to share with your team" in rt.record.preview:
-                rt.record.preview = "Shared with your team."  # the sidebar line said it was waiting
+            if shared and "ready to share" in rt.record.preview:
+                rt.record.preview = "Shared in memory."  # the sidebar line said it was waiting
                 app.registry.save()
                 app.bus.emit({"type": "bot", "bot": bot_id, "bot_state": rt.state()})
             app.bus.emit({"type": "antibodies"})

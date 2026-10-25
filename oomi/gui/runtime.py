@@ -465,9 +465,9 @@ class BotRuntime:
             many = f"{len(saved)} fixes" if len(saved) > 1 else "a fix"
             item = {"id": new_id("n-"), "type": "notice", "level": "info", "ts": time.time(), "action": "antibody",
                     "antibodies": saved, "text": f"{'A fix is' if len(saved) == 1 else f'{len(saved)} fixes are'} "
-                    "ready to share with your team."}
+                    "ready to share in memory."}
             if auto:  # already shared: no button
-                item.update(closed=True, shared=len(saved), auto=True, text=f"Shared {many} with your team automatically.")
+                item.update(closed=True, shared=len(saved), auto=True, text=f"Shared {many} in memory automatically.")
             self.put(item)
 
     def _turn(self, fn) -> None:

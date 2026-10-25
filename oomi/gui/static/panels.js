@@ -814,7 +814,7 @@
         h("div", { class: "small", style: a.search_error ? "color:var(--fg)" : "", title: "Hybrid search ($rankFusion of vector and text), reranked by Voyage inside Atlas, when the cluster supports it." }, searchLine)),
       h("div", { class: "mini" }, setup), h("span", { class: "mark-txt" }, a.search_error ? "!" : "✓"))),
       O.toggleRow("Share fixes automatically", s.antibody_auto_share
-        ? "When a bot proves a fix, it's shared with your team straight away. There's no Share button in the chat."
+        ? "When a bot proves a fix, it's shared in memory straight away. There's no Share button in the chat."
         : "Off: when a bot proves a fix, the chat shows a Share button and nothing is shared until you click it.",
       s.antibody_auto_share, (v) => save({ antibody_auto_share: v }).then(() => { O.toast(v ? "Fixes are shared automatically" : "Fixes wait for Share in the chat", 2000); again(); }), "autoshare"));
 
@@ -874,12 +874,12 @@
     const addErr = h("div", { class: "err hidden" });
     const addBtn = h("button", { type: "submit", class: "btn primary" }, "Save fix");
     body.append(h("div", { class: "section" }, "Add a fix by hand"),
-      h("p", { class: "small-note" }, "For an error you've already fixed yourself. It's shared with your team straight away."),
+      h("p", { class: "small-note" }, "For an error you've already fixed yourself. It's shared in memory straight away."),
       h("form", { class: "stack", autocomplete: "off", onsubmit: async (e) => {
         e.preventDefault(); addBtn.disabled = true; addBtn.textContent = "Saving…"; addErr.classList.add("hidden");
         try {
           await POST("antibodies/add", { error_type: fType.value, error_message: fMsg.value, fix: fFix.value, command: fCmd.value, project: fProj.value });
-          O.toast("Fix saved and shared with your team", 2000); again();
+          O.toast("Fix saved and shared in memory", 2000); again();
         } catch (ex) { addErr.textContent = ex.message; addErr.classList.remove("hidden"); addBtn.disabled = false; addBtn.textContent = "Save fix"; }
       } },
         O.field("Error type", fType, "Optional, like AttributeError or ModuleNotFoundError."),
@@ -901,8 +901,8 @@
           h("button", { type: "button", class: "btn", style: "margin-top:8px", onclick: () => O.copyText(prompt, "Prompt copied") }, icon("copy", 15), "Copy prompt"))],
         ["Send it to any bot", "Paste it into a bot's message box and press Enter. If it asks to run python3 broken.py, click Allow."],
         ["Click Share in the chat", s.antibody_auto_share
-          ? "Share fixes automatically is on, so there's no button: when it's done, the chat says “Shared a fix with your team automatically.”"
-          : "When it's done, the chat says “A fix is ready to share with your team.” Click Share next to it."],
+          ? "Share fixes automatically is on, so there's no button: when it's done, the chat says “Shared a fix in memory automatically.”"
+          : "When it's done, the chat says “A fix is ready to share in memory.” Click Share next to it."],
         ["Check it here", "Come back to this page. The fix is listed under Your team's fixes."],
         ["Check your team gets it", "Send the same prompt to a different bot. The chat says the error matches a fix proven by you, and the bot tries your fix first. On this page, the fix then shows “cured 1 of 1”."],
         ["Clean up", "Click Delete on the fix if you don't want to keep it."],

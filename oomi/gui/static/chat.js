@@ -504,18 +504,18 @@
       };
       // older notices say "…ready to share with your team: review in Settings, Antibodies." and get the button too
       if (it.action === "antibody" || (!it.action && /ready to share with your team: review in Settings, Antibodies\.$/.test(it.text || ""))) {
-        it = { ...it, text: (it.text || "").replace(/:\s*review in Settings, Antibodies\.?$/, ".") };
+        it = { ...it, text: (it.text || "").replace(/ with your team:\s*review in Settings, Antibodies\.?$/, " in memory.") };
         // a fix this bot proved: Share sends it to the team (deleting it is in Settings, Antibodies)
         const share = async (btn) => {
           btn.disabled = true;
           try {
             const r = await POST(`bots/${this.bot}/share`, { item: it.id });
             if (r.item) this.upsertItem(r.item); // don't wait for the live update to redraw the line
-            O.toast(r.shared ? "Shared with your team" : "Already shared or deleted in Settings, Antibodies", 2200);
+            O.toast(r.shared ? "Shared in memory" : "Already shared or deleted in Settings, Antibodies", 2200);
           } catch (e) { O.fail(e); btn.disabled = false; }
         };
         return h("div", { class: "row notice info", dataset: { id: it.id } },
-          h("div", { class: "row-line" }, icon("antibody", 14), h("span", {}, it.auto ? it.text : it.closed ? (it.shared ? "Shared with your team." : "This fix was already shared or deleted.") : it.text),
+          h("div", { class: "row-line" }, icon("antibody", 14), h("span", {}, it.auto ? it.text : it.closed ? (it.shared ? "Shared in memory." : "This fix was already shared or deleted.") : it.text),
             it.closed ? null : h("button", { type: "button", class: "act-btn", onclick: (e) => share(e.currentTarget) }, "Share")));
       }
       const a = ACT[it.action];
