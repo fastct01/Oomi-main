@@ -208,6 +208,21 @@ def test_a_proven_fix_is_shared_from_the_chat_and_deleted_in_settings(server, db
     assert code == 200 and st["approved"] == []
 
 
+def test_an_older_chat_notice_shares_that_bots_waiting_fix(server, db):
+    server.app.connect_team(db=db)
+    _, bot = server.call("POST", "bots", {"name": "Invoices", "trust": "project"})
+    rt = server.app.runtimes[bot["id"]]
+    project = Path(bot["folder"]).name
+    mine = server.app.team.save({"error_text": ERROR, "signature": "s1", "fix": "f", "project": project}, approved=False)
+    other = server.app.team.save({"error_text": "ValueError: x", "signature": "s2", "fix": "g", "project": "elsewhere"}, approved=False)
+    note = rt.put({"id": "n-old", "type": "notice", "level": "info", "ts": 0,
+                   "text": "A fix is ready to share with your team: review in Settings, Antibodies."})
+    code, r = server.call("POST", f"bots/{bot['id']}/share", {"item": note["id"]})
+    assert code == 200 and r["shared"] == 1 and r["item"]["closed"]
+    _, st = server.call("GET", "antibodies")
+    assert [d["id"] for d in st["approved"]] == [str(mine)] and [d["id"] for d in st["pending"]] == [str(other)]
+
+
 def test_a_fix_added_by_hand_is_shared_matched_and_can_be_deleted(server, db):
     server.app.connect_team(db=db)
     server.app.team.use_atlas_search = False  # mongomock has no Atlas Search

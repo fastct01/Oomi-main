@@ -835,16 +835,13 @@
       h("div", { class: "rs dim" }, [d.author ? `by ${d.author}` : "", d.project ? `in ${d.project}` : "",
         d.proven_by && d.proven_by.command ? `proved by \`${d.proven_by.command}\`` : "",
         d.uses ? `cured ${d.cures || 0} of ${d.uses}` : "", d.seconds_to_fix ? `took ${mins(d.seconds_to_fix)}` : ""].filter(Boolean).join(" · "))), actions); };
-    const review = (id, approve) => POST(`antibodies/${id}/review`, { approve }).then(() => { O.toast(approve ? "Shared with your team" : "Discarded", 1500); again(); }).catch(O.fail);
     const remove = (d) => O.confirmBox("Delete this fix?", "It's removed from MongoDB Atlas, so nobody's bots are offered it any more. This can't be undone.", "Delete",
       () => O.api("DELETE", `antibodies/${d.id}`).then(() => { O.toast("Fix deleted", 1500); again(); }), true);
     if (a.pending.length) {
       body.append(h("div", { class: "section" }, `Waiting for you (${a.pending.length})`),
-        h("p", { class: "small-note" }, "Fixes your bots proved. Share them from the chat, or here. Your team only gets the ones you share."),
+        h("p", { class: "small-note" }, "Fixes your bots proved that aren't shared yet. To share one, click Share on its line in that bot's chat. Your team only gets the ones you share."),
         h("div", { class: "routines" }, a.pending.map((d) =>
-          doc(d, h("div", { class: "row-inline", style: "flex:none" },
-            h("button", { type: "button", class: "btn quiet", onclick: () => remove(d) }, "Delete"),
-            h("button", { type: "button", class: "btn primary", onclick: () => review(d.id, true) }, "Share"))))));
+          doc(d, h("button", { type: "button", class: "btn quiet", style: "flex:none", onclick: () => remove(d) }, "Delete")))));
     }
     if (!empty) {
       const list = h("div", { class: "routines" });
@@ -852,7 +849,7 @@
         const w = q.trim().toLowerCase();
         const items = a.approved.filter((d) => !w || `${d.error_text} ${d.fix} ${d.author} ${d.project}`.toLowerCase().includes(w));
         list.replaceChildren(...(items.length ? items.map((d) => doc(d, h("button", { type: "button", class: "btn quiet", style: "flex:none", onclick: () => remove(d) }, "Delete")))
-          : [h("p", { class: "empty-note" }, a.approved.length ? "No fix matches that." : "None shared yet. Share the ones waiting above.")]));
+          : [h("p", { class: "empty-note" }, a.approved.length ? "No fix matches that." : "None shared yet. Click Share on a fix's line in the bot's chat.")]));
       };
       paint();
       body.append(h("div", { class: "section" }, `Your team's fixes (${a.approved.length})`), ...[a.approved.length > 5

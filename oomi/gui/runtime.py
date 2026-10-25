@@ -441,8 +441,7 @@ class BotRuntime:
                                 notify=lambda msg: self.ui.notice(msg, "info"))
 
     def _save_antibody_candidates(self, agent: Agent) -> None:
-        """Fixes found this turn wait for you; nothing is shared before you click Share on the notice in the chat
-        (or in Settings, Antibodies)."""
+        """Fixes found this turn wait for you; nothing is shared before you click Share on the notice in the chat."""
         w = agent.watcher
         if w is None or not w.candidates:
             return

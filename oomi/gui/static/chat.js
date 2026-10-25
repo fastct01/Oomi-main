@@ -502,7 +502,9 @@
         status: ["See status", () => O.openSettings("status")],
         settings: ["Open settings", () => O.openSettings("providers")],
       };
-      if (it.action === "antibody") {
+      // older notices say "…ready to share with your team: review in Settings, Antibodies." and get the button too
+      if (it.action === "antibody" || /ready to share with your team/.test(it.text || "")) {
+        it = { ...it, text: it.text.replace(/:\s*review in Settings, Antibodies\.?$/, ".") };
         // a fix this bot proved: Share sends it to the team (deleting it is in Settings, Antibodies)
         const share = async (btn) => {
           btn.disabled = true;

@@ -1769,11 +1769,15 @@ class Handler(BaseHTTPRequestHandler):
         elif key == ("POST", "share"):
             # The Share button on a chat notice: the fixes that turn proved go to the team
             item = rt.timeline.get(str(self._body().get("item") or ""))
-            if item is None or item.get("action") != "antibody":
+            # Notices written before the button existed don't name their fixes: they share this bot's waiting ones
+            legacy = item is not None and item.get("type") == "notice" and "ready to share with your team" in str(item.get("text"))
+            if item is None or (item.get("action") != "antibody" and not legacy):
                 raise ApiError(404, "No such fix.")
             if app.team is None:
                 raise ApiError(400, "Connect MongoDB Atlas first (Settings, Account).")
-            shared = sum(1 for i in item.get("antibodies") or [] if app.team.review(i, approve=True))
+            ids = item.get("antibodies") or [str(d["_id"]) for d in app.team.list("pending", 50)
+                                             if d.get("project") == Path(rt.record.folder).name]
+            shared = sum(1 for i in ids if app.team.review(i, approve=True))
             item = dict(item, closed=True, shared=shared)
             rt.put(item)
             app.bus.emit({"type": "antibodies"})
