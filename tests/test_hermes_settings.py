@@ -50,7 +50,10 @@ def test_notes_walk_up_to_the_git_root_and_no_further(env):
     assert out.index("package rules") < out.index("repo rules")  # nearer the folder first
 
 
-def test_notes_without_a_git_root_only_read_the_bots_own_folder_outside_home(env):
+def test_notes_without_a_git_root_only_read_the_bots_own_folder_outside_home(env, monkeypatch):
+    # Home elsewhere: on Windows the temp folder is inside the home folder, so it wouldn't be "outside home"
+    for var in ("HOME", "USERPROFILE"):
+        monkeypatch.setenv(var, str(env.tmp / "somebody"))
     (env.tmp / "AGENTS.md").write_text("parent")
     assert project_notes(env.ws) == ""
 

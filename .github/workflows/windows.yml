@@ -84,11 +84,10 @@ jobs:
         with:
           files: Oomi-${{ steps.version.outputs.version }}-windows.zip
 
-  # The test suite on Windows. Some tests assume a Mac or bash, so this reports without blocking the build.
+  # The test suite on Windows (the macOS sandbox tests are skipped there). Failures are also listed as annotations.
   tests:
     runs-on: windows-latest
     timeout-minutes: 30
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
