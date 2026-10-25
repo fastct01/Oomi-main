@@ -97,4 +97,14 @@ jobs:
       - run: |
           python -m pip install --upgrade pip
           pip install ".[dev]"
-      - run: python -X utf8 -m pytest -q -p no:cacheprovider
+      - name: Run the tests
+        shell: pwsh
+        run: |
+          $out = python -X utf8 -m pytest -q -rf -p no:cacheprovider 2>&1 | ForEach-Object { "$_" }
+          $out | Select-Object -Last 60
+          # Annotations can be read on the run's page (and through the API) without opening the log
+          $summary = ($out | Select-String -Pattern "\d+ (passed|failed)" | Select-Object -Last 1).Line
+          $failed = ($out | Select-String -Pattern "^FAILED " | ForEach-Object { $_.Line.Substring(0, [Math]::Min(230, $_.Line.Length)) }) -join "%0A"
+          Write-Output "::warning title=Windows tests::$summary"
+          if ($failed) { Write-Output "::warning title=Failed on Windows::$failed" }
+          if ($summary -match "failed|error") { exit 1 }
